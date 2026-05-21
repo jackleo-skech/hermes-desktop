@@ -32,6 +32,7 @@ import {
   readLogs,
   InstallProgress,
 } from "./installer";
+import { updaterLogger } from "./updater-log";
 import {
   isRemoteMode,
   isRemoteOnlyMode,
@@ -1401,6 +1402,9 @@ function setupUpdater(): void {
     autoUpdater: AppUpdater;
   };
 
+  // Log the updater's own lifecycle to <userData>/logs/updater.log so a
+  // failed update (e.g. issue #271) leaves something to diagnose.
+  autoUpdater.logger = updaterLogger;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
@@ -1446,6 +1450,11 @@ function setupUpdater(): void {
   });
 
   ipcMain.handle("install-update", () => {
+    // Bracket the suspect call: if the log shows this line but the app
+    // never relaunches, the failure is in quitAndInstall / the installer.
+    updaterLogger.info(
+      "Restart requested by user — calling quitAndInstall(isSilent=false, isForceRunAfter=true)",
+    );
     autoUpdater.quitAndInstall(false, true);
   });
 
