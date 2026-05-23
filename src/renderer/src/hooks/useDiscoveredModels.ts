@@ -39,7 +39,14 @@ export interface UseDiscoveredModelsResult {
 export function useDiscoveredModels(
   args: UseDiscoveredModelsArgs,
 ): UseDiscoveredModelsResult {
-  const { provider, baseUrl, apiKey, profile, enabled = true, refreshToken } = args;
+  const {
+    provider,
+    baseUrl,
+    apiKey,
+    profile,
+    enabled = true,
+    refreshToken,
+  } = args;
   const [models, setModels] = useState<string[]>([]);
   const [status, setStatus] = useState<DiscoveryStatus>("idle");
   const [cached, setCached] = useState(false);

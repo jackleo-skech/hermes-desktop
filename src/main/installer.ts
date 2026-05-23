@@ -610,9 +610,10 @@ function dirContainsAnyFile(dir: string, maxDepth = 3): boolean {
   return false;
 }
 
-export function checkOpenClawExists(
-  home: string = homedir(),
-): { found: boolean; path: string | null } {
+export function checkOpenClawExists(home: string = homedir()): {
+  found: boolean;
+  path: string | null;
+} {
   for (const name of OPENCLAW_DIR_NAMES) {
     const dir = join(home, name);
     if (existsSync(dir) && dirContainsAnyFile(dir)) {

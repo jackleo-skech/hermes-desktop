@@ -273,8 +273,7 @@ const hermesAPI = {
       format: "text" | "markdown",
     ): void => callback(format);
     ipcRenderer.on("context-menu-copy-chat", handler);
-    return () =>
-      ipcRenderer.removeListener("context-menu-copy-chat", handler);
+    return () => ipcRenderer.removeListener("context-menu-copy-chat", handler);
   },
 
   onContextMenuSelectBubble: (

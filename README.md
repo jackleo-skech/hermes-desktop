@@ -107,7 +107,6 @@ sudo dnf install ./hermes-desktop-<version>.rpm
 - **i18n ready** — internationalization framework with English locale covering all screens, ready for community translations
 - **Test suite** — SSE parser, IPC handlers, preload API surface, installer utilities, and constants validation with Vitest
 
-
 ## How It Works
 
 On first launch, the app:

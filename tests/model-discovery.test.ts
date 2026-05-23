@@ -15,7 +15,9 @@ let testHome: string;
 let server: http.Server;
 let baseUrl: string;
 
-async function loadDiscovery(): Promise<typeof import("../src/main/model-discovery")> {
+async function loadDiscovery(): Promise<
+  typeof import("../src/main/model-discovery")
+> {
   vi.resetModules();
   vi.stubEnv("HERMES_HOME", testHome);
   const mod = await import("../src/main/model-discovery");
@@ -54,11 +56,7 @@ describe("model-discovery", () => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
-            data: [
-              { id: "gamma" },
-              { id: "alpha" },
-              { id: "beta" },
-            ],
+            data: [{ id: "gamma" }, { id: "alpha" }, { id: "beta" }],
           }),
         );
         return;
@@ -70,7 +68,12 @@ describe("model-discovery", () => {
     writeFileSync(join(testHome, ".env"), "DEEPSEEK_API_KEY=sk-test\n");
 
     const { discoverProviderModels } = await loadDiscovery();
-    const result = await discoverProviderModels("custom", baseUrl, "sk-explicit", undefined);
+    const result = await discoverProviderModels(
+      "custom",
+      baseUrl,
+      "sk-explicit",
+      undefined,
+    );
 
     expect(result.status).toBe("ok");
     expect(result.cached).toBe(false);
@@ -102,7 +105,12 @@ describe("model-discovery", () => {
     // openai-codex / qwen-oauth are no longer here — OAuth providers are
     // discovered via hermes-agent's provider_model_ids instead.
     for (const provider of ["nous", "google", "xai"]) {
-      const result = await discoverProviderModels(provider, undefined, "sk-x", undefined);
+      const result = await discoverProviderModels(
+        provider,
+        undefined,
+        "sk-x",
+        undefined,
+      );
       expect(result.status).toBe("unsupported");
       expect(result.models).toEqual([]);
     }
@@ -254,10 +262,7 @@ describe("model-discovery", () => {
       res.end(JSON.stringify({ data: [{ id: "m" }] }));
     });
     await listen();
-    writeFileSync(
-      join(testHome, ".env"),
-      "DEEPSEEK_API_KEY=sk-from-dotenv\n",
-    );
+    writeFileSync(join(testHome, ".env"), "DEEPSEEK_API_KEY=sk-from-dotenv\n");
 
     const { discoverProviderModels } = await loadDiscovery();
     const result = await discoverProviderModels(

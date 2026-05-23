@@ -29,7 +29,10 @@ function installHermesAPI(): {
     syncSessionCache: vi.fn().mockResolvedValue([]),
     searchSessions: vi.fn().mockResolvedValue([]),
   };
-  Object.defineProperty(window, "hermesAPI", { configurable: true, value: api });
+  Object.defineProperty(window, "hermesAPI", {
+    configurable: true,
+    value: api,
+  });
   return api;
 }
 

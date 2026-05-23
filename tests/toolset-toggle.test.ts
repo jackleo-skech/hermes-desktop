@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { join } from "path";
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "fs";
-import { tmpdir } from "os";
 
 /**
  * Tests for setToolsetEnabled / getToolsets — the YAML line-by-line
@@ -33,9 +32,8 @@ vi.mock("../src/main/installer", () => ({
 
 vi.mock("../src/main/utils", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const actual = vi.importActual<typeof import("../src/main/utils")>(
-    "../src/main/utils",
-  );
+  const actual =
+    vi.importActual<typeof import("../src/main/utils")>("../src/main/utils");
   return actual;
 });
 
@@ -246,14 +244,7 @@ describe("setToolsetEnabled — existing cli subsection (C2a)", () => {
   });
 
   it("round-trips enable after disable on an existing cli list", () => {
-    writeConfig(
-      [
-        "platform_toolsets:",
-        "  cli:",
-        "      - web",
-        "",
-      ].join("\n"),
-    );
+    writeConfig(["platform_toolsets:", "  cli:", "      - web", ""].join("\n"));
 
     setToolsetEnabled("web", false);
     let toolsets = getToolsets();
@@ -267,14 +258,7 @@ describe("setToolsetEnabled — existing cli subsection (C2a)", () => {
 
 describe("setToolsetEnabled — disable all (C2d)", () => {
   it("handles empty cli list gracefully when last toolset is disabled", () => {
-    writeConfig(
-      [
-        "platform_toolsets:",
-        "  cli:",
-        "      - web",
-        "",
-      ].join("\n"),
-    );
+    writeConfig(["platform_toolsets:", "  cli:", "      - web", ""].join("\n"));
 
     const result = setToolsetEnabled("web", false);
     expect(result).toBe(true);

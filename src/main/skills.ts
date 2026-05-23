@@ -329,10 +329,7 @@ export function installSkill(
   }
 }
 
-export function uninstallSkill(
-  name: string,
-  profile?: string,
-): SkillCliResult {
+export function uninstallSkill(name: string, profile?: string): SkillCliResult {
   try {
     const args = hermesCliArgs(["skills", "uninstall", name]);
     if (profile && profile !== "default") {

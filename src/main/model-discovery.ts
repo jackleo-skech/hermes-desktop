@@ -110,9 +110,7 @@ const PROVIDER_MODELS_SNIPPET =
 /** Ask hermes-agent's `provider_model_ids` for a provider's models by
  *  running a short Python snippet against the bundled venv. Returns the
  *  parsed list, or null on any failure (so the caller can fall back). */
-function runProviderModelIdsPython(
-  provider: string,
-): Promise<string[] | null> {
+function runProviderModelIdsPython(provider: string): Promise<string[] | null> {
   return new Promise((resolve) => {
     execFile(
       HERMES_PYTHON,

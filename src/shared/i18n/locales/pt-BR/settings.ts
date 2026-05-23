@@ -44,7 +44,8 @@ export default {
     "Nome do modelo padrão (deixe em branco para usar o padrão do provedor)",
   refreshModels: "Atualizar lista de modelos",
   discoveringModels: "Carregando modelos disponíveis…",
-  discoveredCount: "{{count}} modelos disponíveis — comece a digitar para filtrar",
+  discoveredCount:
+    "{{count}} modelos disponíveis — comece a digitar para filtrar",
   discoveryNoKey:
     "Defina a chave de API deste provedor no .env para carregar a lista de modelos disponíveis",
   discoveryError:

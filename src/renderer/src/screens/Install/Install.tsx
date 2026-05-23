@@ -205,9 +205,7 @@ function Install({
               {t("common.cancel")}
             </button>
           </div>
-          <p className="install-confirm-hint">
-            {t("install.useExistingHint")}
-          </p>
+          <p className="install-confirm-hint">{t("install.useExistingHint")}</p>
           {useExistingError && (
             <p className="install-confirm-error">{useExistingError}</p>
           )}

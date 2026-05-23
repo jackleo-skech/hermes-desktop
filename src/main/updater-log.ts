@@ -10,7 +10,13 @@
  * The object satisfies electron-updater's `Logger` interface.
  */
 import { app } from "electron";
-import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import { join } from "path";
 
 // Rotate (truncate) the log once it passes this size — updater sessions are
@@ -32,8 +38,7 @@ function logFilePath(): string {
 }
 
 function write(level: string, message?: unknown): void {
-  const text =
-    typeof message === "string" ? message : JSON.stringify(message);
+  const text = typeof message === "string" ? message : JSON.stringify(message);
   const tag = `[updater] ${text}`;
   if (level === "error") console.error(tag);
   else if (level === "warn") console.warn(tag);

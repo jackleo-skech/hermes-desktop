@@ -1799,7 +1799,9 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background var(--transition), color var(--transition);
+  transition:
+    background var(--transition),
+    color var(--transition);
 }
 
 .chat-attach-btn:hover:not(:disabled) {
@@ -5556,7 +5558,9 @@ body {
   flex-direction: column;
   gap: 6px;
   cursor: grab;
-  transition: border-color var(--transition), opacity var(--transition);
+  transition:
+    border-color var(--transition),
+    opacity var(--transition);
 }
 
 .kanban-card:hover {
@@ -5785,4 +5789,3 @@ body {
   font-size: 11px;
   color: var(--text-muted);
 }
-

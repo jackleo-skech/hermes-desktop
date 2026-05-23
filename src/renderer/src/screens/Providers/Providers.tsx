@@ -304,9 +304,7 @@ function Providers({
               value={modelName}
               onChange={(e) => setModelName(e.target.value)}
               placeholder={t("settings.modelNamePlaceholder")}
-              list={
-                discovery.models.length > 0 ? discoveryListId : undefined
-              }
+              list={discovery.models.length > 0 ? discoveryListId : undefined}
               autoComplete="off"
             />
             {discovery.status !== "unsupported" &&

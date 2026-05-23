@@ -45,7 +45,11 @@ describe("setModelConfig — known-host custom provider auto-api-key (issue #260
     writeBaseFiles("DEEPSEEK_API_KEY=sk-deepseek-real-key\n", SEED_YAML);
     const { setModelConfig } = await loadConfig();
 
-    setModelConfig("custom", "deepseek-reasoner", "https://api.deepseek.com/v1");
+    setModelConfig(
+      "custom",
+      "deepseek-reasoner",
+      "https://api.deepseek.com/v1",
+    );
 
     const out = readFileSync(join(testHome, "config.yaml"), "utf-8");
     expect(out).toContain('provider: "custom"');
@@ -58,7 +62,11 @@ describe("setModelConfig — known-host custom provider auto-api-key (issue #260
     writeBaseFiles('DEEPSEEK_API_KEY="sk-quoted-key"\n', SEED_YAML);
     const { setModelConfig } = await loadConfig();
 
-    setModelConfig("custom", "deepseek-reasoner", "https://api.deepseek.com/v1");
+    setModelConfig(
+      "custom",
+      "deepseek-reasoner",
+      "https://api.deepseek.com/v1",
+    );
 
     const out = readFileSync(join(testHome, "config.yaml"), "utf-8");
     expect(out).toContain('api_key: "sk-quoted-key"');
@@ -79,7 +87,11 @@ describe("setModelConfig — known-host custom provider auto-api-key (issue #260
     writeBaseFiles("UNRELATED=x\n", SEED_YAML);
     const { setModelConfig } = await loadConfig();
 
-    setModelConfig("custom", "deepseek-reasoner", "https://api.deepseek.com/v1");
+    setModelConfig(
+      "custom",
+      "deepseek-reasoner",
+      "https://api.deepseek.com/v1",
+    );
 
     const out = readFileSync(join(testHome, "config.yaml"), "utf-8");
     expect(out).not.toContain("api_key:");
@@ -104,7 +116,11 @@ describe("setModelConfig — known-host custom provider auto-api-key (issue #260
 
     // Built-in providers go through their own gateway path; the workaround
     // is scoped strictly to bare-`custom`.
-    setModelConfig("deepseek", "deepseek-reasoner", "https://api.deepseek.com/v1");
+    setModelConfig(
+      "deepseek",
+      "deepseek-reasoner",
+      "https://api.deepseek.com/v1",
+    );
 
     const out = readFileSync(join(testHome, "config.yaml"), "utf-8");
     expect(out).not.toContain("api_key:");
@@ -155,15 +171,23 @@ auxiliary:
     writeBaseFiles("DEEPSEEK_API_KEY=sk-deepseek-real\n", realisticYaml);
     const { setModelConfig } = await loadConfig();
 
-    setModelConfig("custom", "deepseek-reasoner", "https://api.deepseek.com/v1");
+    setModelConfig(
+      "custom",
+      "deepseek-reasoner",
+      "https://api.deepseek.com/v1",
+    );
 
     const out = readFileSync(join(testHome, "config.yaml"), "utf-8");
     // Model block must have the auto-key
     const modelBlock = out.match(/^model:[\s\S]*?(?=^\S)/m)?.[0] || "";
     expect(modelBlock).toContain('api_key: "sk-deepseek-real"');
     // Auxiliary sections must still have their original empty api_key
-    expect(out).toContain("vision:\n    provider: auto\n    model: ''\n    base_url: ''\n    api_key: ''");
-    expect(out).toContain("web_extract:\n    provider: auto\n    model: ''\n    base_url: ''\n    api_key: ''");
+    expect(out).toContain(
+      "vision:\n    provider: auto\n    model: ''\n    base_url: ''\n    api_key: ''",
+    );
+    expect(out).toContain(
+      "web_extract:\n    provider: auto\n    model: ''\n    base_url: ''\n    api_key: ''",
+    );
     // Exactly one non-empty api_key value in the whole file (the model one)
     const realKeys = out.match(/api_key:\s*"[^"]+"/g) || [];
     expect(realKeys).toHaveLength(1);
@@ -179,7 +203,11 @@ auxiliary:
     writeBaseFiles("DEEPSEEK_API_KEY=sk-deepseek-new\n", initial);
     const { setModelConfig } = await loadConfig();
 
-    setModelConfig("custom", "deepseek-reasoner", "https://api.deepseek.com/v1");
+    setModelConfig(
+      "custom",
+      "deepseek-reasoner",
+      "https://api.deepseek.com/v1",
+    );
 
     const out = readFileSync(join(testHome, "config.yaml"), "utf-8");
     expect(out).toContain('api_key: "sk-deepseek-new"');

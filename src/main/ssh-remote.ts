@@ -1673,7 +1673,8 @@ function mapClaw3dTaskToKanbanTask(raw: Claw3dSharedTaskRecord): KanbanTask {
     created_by: raw.source || null,
     created_at: createdAt,
     started_at: null,
-    completed_at: status === "done" ? parseIsoToEpochSeconds(raw.updatedAt) : null,
+    completed_at:
+      status === "done" ? parseIsoToEpochSeconds(raw.updatedAt) : null,
     result: null,
     skills: [],
     max_retries: null,

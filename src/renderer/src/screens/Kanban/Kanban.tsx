@@ -234,11 +234,7 @@ function Kanban({ profile, visible }: KanbanProps): React.JSX.Element {
         // "if I'm running tunnel mode, use tunnel not default". After this
         // one-shot fires, respect the user's explicit choice — never
         // re-jump them on subsequent refreshes.
-        if (
-          !autoDefaultedRef.current &&
-          activeBoardSlug === null &&
-          hqOk
-        ) {
+        if (!autoDefaultedRef.current && activeBoardSlug === null && hqOk) {
           autoDefaultedRef.current = true;
           setActiveBoardSlug(HQ_BOARD_SLUG);
           setTasks(hqTasks);
@@ -659,8 +655,8 @@ function Kanban({ profile, visible }: KanbanProps): React.JSX.Element {
 
       {isHqActive && (
         <div className="kanban-hq-banner">
-          Read-only mirror of Claw3D&apos;s headquarters board. Edits made
-          here would not sync — use the Office screen to manage HQ tasks.
+          Read-only mirror of Claw3D&apos;s headquarters board. Edits made here
+          would not sync — use the Office screen to manage HQ tasks.
         </div>
       )}
 

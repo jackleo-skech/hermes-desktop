@@ -724,7 +724,11 @@ export function setModelConfig(
   // Scope all api_key add/update/remove operations to the `model:` block —
   // `auxiliary.*` subsections each carry their own `api_key:` line and must
   // not be touched.
-  const autoApiKey = pickAutoApiKeyForCustomProvider(provider, baseUrl, profile);
+  const autoApiKey = pickAutoApiKeyForCustomProvider(
+    provider,
+    baseUrl,
+    profile,
+  );
   const body = findModelBlockBody(content);
   if (body) {
     const block = content.slice(body.start, body.end);
@@ -764,7 +768,8 @@ export function setModelConfig(
       newBlock = block.replace(apiKeyInBlock, "");
     }
     if (newBlock !== block) {
-      content = content.slice(0, body.start) + newBlock + content.slice(body.end);
+      content =
+        content.slice(0, body.start) + newBlock + content.slice(body.end);
     }
   }
 
