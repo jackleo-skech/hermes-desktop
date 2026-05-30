@@ -83,4 +83,17 @@ export default {
     version: "Show Hermes version",
   },
   queued: "{{count}} message(s) queued — will send when the agent finishes",
+  worktree: {
+    loading: "Loading",
+    empty: "Folder is empty",
+    emptyFolder: "Empty folder",
+    errorLoading: "Failed to load folder contents",
+    closeFile: "Close",
+    open: "Open",
+    openInEditor: "Open in default editor",
+    fileTruncated: "truncated",
+    fileTruncatedWarning: "File is too large — showing first 100KB only",
+  },
+  showWorktree: "Show file explorer",
+  hideWorktree: "Hide file explorer",
 } as const;

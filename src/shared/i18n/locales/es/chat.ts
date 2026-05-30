@@ -79,4 +79,10 @@ export default {
     persona: "Mostrar la personalidad actual",
     version: "Mostrar la versión de Hermes",
   },
+  worktree: {
+    loading: "Cargando",
+    empty: "La carpeta está vacía",
+    emptyFolder: "Carpeta vacía",
+    errorLoading: "Error al cargar el contenido de la carpeta",
+  },
 } as const;

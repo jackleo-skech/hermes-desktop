@@ -75,4 +75,10 @@ export default {
     persona: "查看当前人格",
     version: "查看 Hermes 版本",
   },
+  worktree: {
+    loading: "加载中",
+    empty: "文件夹为空",
+    emptyFolder: "空文件夹",
+    errorLoading: "加载文件夹内容失败",
+  },
 } as const;

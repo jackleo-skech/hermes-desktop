@@ -79,4 +79,10 @@ export default {
     persona: "Tampilkan persona saat ini",
     version: "Tampilkan versi Hermes",
   },
+  worktree: {
+    loading: "Memuat",
+    empty: "Folder kosong",
+    emptyFolder: "Folder kosong",
+    errorLoading: "Gagal memuat konten folder",
+  },
 } as const;

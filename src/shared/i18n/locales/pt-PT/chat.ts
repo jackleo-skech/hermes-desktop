@@ -81,4 +81,10 @@ export default {
   },
   queued:
     "{{count}} mensagem(ns) em fila — serão enviadas quando o agente terminar",
+  worktree: {
+    loading: "A carregar",
+    empty: "A pasta está vazia",
+    emptyFolder: "Pasta vazia",
+    errorLoading: "Falha ao carregar conteúdo da pasta",
+  },
 } as const;

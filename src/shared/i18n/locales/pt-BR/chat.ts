@@ -79,4 +79,10 @@ export default {
     persona: "Mostrar a persona atual",
     version: "Mostrar a versão do Hermes",
   },
+  worktree: {
+    loading: "Carregando",
+    empty: "A pasta está vazia",
+    emptyFolder: "Pasta vazia",
+    errorLoading: "Falha ao carregar conteúdo da pasta",
+  },
 } as const;
