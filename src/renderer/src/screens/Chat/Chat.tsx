@@ -4,6 +4,7 @@ import { ChatHeader } from "./ChatHeader";
 import { ChatEmptyState } from "./ChatEmptyState";
 import { MessageList } from "./MessageList";
 import { ModelPicker } from "./ModelPicker";
+import { ReasoningEffortPicker } from "./ReasoningEffortPicker";
 import { ContextFolderChip } from "./ContextFolderChip";
 import { WorktreePanel } from "./WorktreePanel";
 import { useChatScroll } from "./hooks/useChatScroll";
@@ -11,6 +12,7 @@ import { useChatIPC } from "./hooks/useChatIPC";
 import { useChatActions } from "./hooks/useChatActions";
 import { useModelConfig } from "./hooks/useModelConfig";
 import { useFastMode } from "./hooks/useFastMode";
+import { useReasoningEffort } from "./hooks/useReasoningEffort";
 import { useLocalCommands } from "./hooks/useLocalCommands";
 import { useI18n } from "../../components/useI18n";
 import { buildChatTranscript } from "./transcriptUtils";
@@ -83,6 +85,7 @@ function Chat({
     toggle: toggleFastMode,
     set: setFastTier,
   } = useFastMode(profile);
+  const { reasoningEffort, setReasoningEffort } = useReasoningEffort(profile);
 
   // Pre-send readiness — fail-open check that disables Send + shows
   // an inline banner when the desktop can predict that the gateway
@@ -413,6 +416,10 @@ function Chat({
                 displayModel={modelConfig.displayModel}
                 onOpen={modelConfig.reload}
                 onSelectModel={modelConfig.selectModel}
+              />
+              <ReasoningEffortPicker
+                value={reasoningEffort}
+                onChange={setReasoningEffort}
               />
               <ContextFolderChip
                 contextFolder={contextFolder}

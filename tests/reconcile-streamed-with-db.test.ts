@@ -494,4 +494,125 @@ describe("reconcileStreamedWithDb", () => {
       ("attachments" in merged[0] && merged[0].attachments) || [],
     ).toHaveLength(1);
   });
+
+  it("drops synthetic live tool rows once matching canonical DB tool rows arrive", () => {
+    const streamed: ChatMessage[] = [
+      STREAMED_USER("make an image", "u-1"),
+      {
+        id: "tool-call-live-tool:run-1:skill_view:1",
+        kind: "tool_call",
+        role: "agent",
+        callId: "live-tool:run-1:skill_view:1",
+        name: "skill_view",
+        args: "ai-playground-image-gen",
+      },
+      {
+        id: "tool-call-live-tool:run-1:execute_code:1",
+        kind: "tool_call",
+        role: "agent",
+        callId: "live-tool:run-1:execute_code:1",
+        name: "execute_code",
+        args: "from hermes_tools import terminal",
+      },
+      STREAMED_AGENT("Done.", "a-1"),
+    ];
+    const db: ChatMessage[] = [
+      DB_USER("make an image", 60),
+      DB_TOOL_CALL("call-skill", "skill_view", "ai-playground-image-gen", 61),
+      DB_TOOL_RESULT("call-skill", "skill_view", "ok", 62),
+      DB_TOOL_CALL("call-code", "execute_code", "from hermes_tools import terminal", 63),
+      DB_TOOL_RESULT("call-code", "execute_code", "ok", 64),
+      DB_AGENT("Done.", 65),
+    ];
+
+    const merged = reconcileStreamedWithDb(streamed, db);
+
+    expect(merged.map((m) => m.id)).toEqual([
+      "u-1",
+      "db-tc-61-call-skill",
+      "db-tr-62",
+      "db-tc-63-call-code",
+      "db-tr-64",
+      "a-1",
+    ]);
+  });
+
+  it("does not drop extra repeated same-name synthetic tools when DB has fewer canonical rows", () => {
+    const streamed: ChatMessage[] = [
+      STREAMED_USER("run checks", "u-1"),
+      {
+        id: "tool-call-live-tool:run-1:terminal:1",
+        kind: "tool_call",
+        role: "agent",
+        callId: "live-tool:run-1:terminal:1",
+        name: "terminal",
+        args: "npm test",
+      },
+      {
+        id: "tool-call-live-tool:run-1:terminal:2",
+        kind: "tool_call",
+        role: "agent",
+        callId: "live-tool:run-1:terminal:2",
+        name: "terminal",
+        args: "npm run typecheck",
+      },
+      STREAMED_AGENT("Done.", "a-1"),
+    ];
+    const db: ChatMessage[] = [
+      DB_USER("run checks", 70),
+      DB_TOOL_CALL("call-terminal-1", "terminal", "npm test", 71),
+      DB_AGENT("Done.", 72),
+    ];
+
+    const merged = reconcileStreamedWithDb(streamed, db);
+
+    expect(merged.map((m) => m.id)).toEqual([
+      "u-1",
+      "db-tc-71-call-terminal-1",
+      "a-1",
+      "tool-call-live-tool:run-1:terminal:2",
+    ]);
+    expect(merged[3]).toMatchObject({
+      kind: "tool_call",
+      name: "terminal",
+      args: "npm run typecheck",
+    });
+  });
+
+  it("does not let exact canonical tool matches consume extra synthetic same-name rows", () => {
+    const streamed: ChatMessage[] = [
+      STREAMED_USER("run checks", "u-1"),
+      {
+        id: "tool-call-call-terminal-1",
+        kind: "tool_call",
+        role: "agent",
+        callId: "call-terminal-1",
+        name: "terminal",
+        args: "npm test",
+      },
+      {
+        id: "tool-call-live-tool:run-1:terminal:2",
+        kind: "tool_call",
+        role: "agent",
+        callId: "live-tool:run-1:terminal:2",
+        name: "terminal",
+        args: "npm run typecheck",
+      },
+      STREAMED_AGENT("Done.", "a-1"),
+    ];
+    const db: ChatMessage[] = [
+      DB_USER("run checks", 80),
+      DB_TOOL_CALL("call-terminal-1", "terminal", "npm test", 81),
+      DB_AGENT("Done.", 82),
+    ];
+
+    const merged = reconcileStreamedWithDb(streamed, db);
+
+    expect(merged.map((m) => m.id)).toEqual([
+      "u-1",
+      "tool-call-call-terminal-1",
+      "a-1",
+      "tool-call-live-tool:run-1:terminal:2",
+    ]);
+  });
 });

@@ -213,12 +213,12 @@ function checkApiServerKeyPlacement(profile?: string): ConfigHealthIssue[] {
     if (configExists) {
       issues.push({
         code: "EMPTY_API_SERVER_KEY",
-        severity: "info",
+        severity: "warning",
         message:
-          "No API_SERVER_KEY is set — session continuation will use the gateway's anonymous fallback.",
+          "No API_SERVER_KEY is set — chat will fail because the Hermes gateway requires auth.",
         detail:
-          "If you want to enforce auth on the local gateway (or are " +
-          "running it remotely / behind SSH), set API_SERVER_KEY in .env.",
+          "API_SERVER_KEY is mandatory for Hermes API access. " +
+          "Set it in .env (or under Settings → Providers) to authenticate requests.",
         locations: [envFile],
         autoFixable: false,
         fixLocation: "setup",

@@ -228,6 +228,34 @@ function reconciliationKey(m: ChatMessage): string | null {
   return `${bubble.role}:${normalizeBubbleContentForMatch(bubble.content || "").slice(0, 200)}`;
 }
 
+function isSyntheticLiveToolMessage(m: ChatMessage): boolean {
+  return (
+    "kind" in m &&
+    (m.kind === "tool_call" || m.kind === "tool_result") &&
+    (m.callId.startsWith("live-tool:") || m.id.includes("live-tool:"))
+  );
+}
+
+function toolNameMatchKey(m: ChatMessage): string | null {
+  if (!("kind" in m)) return null;
+  if (m.kind !== "tool_call" && m.kind !== "tool_result") return null;
+  return `${m.kind}:${m.name}`;
+}
+
+function consumeCanonicalToolMatch(
+  canonicalToolMatchCounts: Map<string, number>,
+  live: ChatMessage,
+): boolean {
+  if (!isSyntheticLiveToolMessage(live)) return false;
+  const key = toolNameMatchKey(live);
+  if (!key) return false;
+  const remaining = canonicalToolMatchCounts.get(key) || 0;
+  if (remaining <= 0) return false;
+  if (remaining === 1) canonicalToolMatchCounts.delete(key);
+  else canonicalToolMatchCounts.set(key, remaining - 1);
+  return true;
+}
+
 /**
  * Merge DB-only metadata (e.g. attachments) into a streamed message
  * while preserving the streamed message's React identity (id).
@@ -295,6 +323,7 @@ export function reconcileStreamedWithDb(
 
   const dbAssistantSplitSequences = buildDbAssistantSplitSequences(db);
   const result: ChatMessage[] = [];
+  const canonicalToolMatchCounts = new Map<string, number>();
   for (const dbMsg of db) {
     const key = reconciliationKey(dbMsg);
     const bucket = key ? streamedByKey.get(key) : undefined;
@@ -306,6 +335,13 @@ export function reconcileStreamedWithDb(
       // streamed copy.
       result.push(mergeDbMetadataIntoStreamed(streamedMatch, dbMsg));
     } else {
+      const toolKey = toolNameMatchKey(dbMsg);
+      if (toolKey && !isSyntheticLiveToolMessage(dbMsg)) {
+        canonicalToolMatchCounts.set(
+          toolKey,
+          (canonicalToolMatchCounts.get(toolKey) || 0) + 1,
+        );
+      }
       result.push(dbMsg);
     }
   }
@@ -349,6 +385,7 @@ export function reconcileStreamedWithDb(
     dropDbSplitArtifacts = true,
   ): boolean => {
     if (consumedIds.has(m.id)) return false;
+    if (consumeCanonicalToolMatch(canonicalToolMatchCounts, m)) return false;
     // For bubble messages, check if an equivalent already exists in the
     // result set.  Non-bubble messages (tool_call, tool_result, reasoning)
     // always pass through — they're either matched by callId above or are

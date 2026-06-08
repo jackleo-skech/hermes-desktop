@@ -46,6 +46,12 @@ export default function ProfileSwitcher({
       });
   }, []);
 
+  // Load once on mount so the sidebar trigger shows the correct gateway
+  // status immediately, without requiring the user to open the menu first.
+  useEffect(() => {
+    load();
+  }, [load]);
+
   // Refresh the list each time the menu opens — model/skill counts and the
   // gateway-running dot can change while the app is open.
   useEffect(() => {

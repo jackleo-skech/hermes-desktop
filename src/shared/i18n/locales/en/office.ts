@@ -1,5 +1,12 @@
 export default {
   title: "Office",
+  subtitle: "Your agents at work, live in 3D",
+  loadingAgents: "Loading agents...",
+  noAgents: "No agents found.",
+  refresh: "Refresh",
+  agentCount_one: "{{count}} agent",
+  agentCount_other: "{{count}} agents",
+  selectAgentHint: "Click an agent to focus on them",
   checkingStatus: "Checking Claw3D status...",
   setupTitle: "Set Up Claw3D",
   installTitle: "Setting Up Claw3D",
@@ -26,4 +33,18 @@ export default {
     "Claw3D is a 3D visualization environment for your Hermes agents. It lets you see your agents working in an interactive office space.",
   setupDesc2:
     "Click below to automatically download and set up Claw3D. This will clone the repository and install all dependencies.",
+  // Agent details sidebar
+  statusLabel: "Status",
+  modelLabel: "Model",
+  providerLabel: "Provider",
+  gatewayLabel: "Gateway",
+  gatewayRunning: "Running",
+  gatewayStopped: "Stopped",
+  status_working: "Working",
+  status_idle: "Idle",
+  status_error: "Error",
+  employee: "Employee",
+  ceo: "CEO",
+  makeCeo: "Make CEO",
+  removeCeo: "Remove as CEO",
 } as const;

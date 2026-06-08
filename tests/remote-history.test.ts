@@ -29,7 +29,7 @@ function extractExportedFunction(name: string): string {
 
 function extractLocalRecoveryFunction(): string {
   const startMatch = hermesSrc.indexOf(
-    "async function sendMessageViaApiWithLocalRecovery(",
+    "async function sendMessageViaBestApiWithLocalRecovery(",
   );
   expect(startMatch).toBeGreaterThan(-1);
 
@@ -48,20 +48,20 @@ function extractLocalRecoveryFunction(): string {
  * single-turn requests.
  */
 describe("Remote/SSH Mode History Preservation", () => {
-  it("sendMessage passes history to sendMessageViaApi in remote mode", () => {
+  it("sendMessage passes history to the API transport in remote mode", () => {
     // Extract the sendMessage function's remote mode branch
     const remoteModeBranch = hermesSrc.match(
-      /\/\/ Remote mode: always use API, no CLI fallback[\s\S]*?if \(isRemoteMode\(\)\) \{[\s\S]*?return sendMessageViaApi\([\s\S]*?\);[\s\S]*?\}/,
+      /\/\/ Remote mode: always use API, no CLI fallback[\s\S]*?if \(isRemoteMode\(\)\) \{[\s\S]*?return sendMessageViaBestApi\([\s\S]*?\);[\s\S]*?\}/,
     );
 
     expect(remoteModeBranch).toBeDefined();
 
     const branchCode = remoteModeBranch![0];
 
-    // Verify that sendMessageViaApi is called with history parameter.
+    // Verify that the API transport is called with history parameter.
     // Call signature is (message, cb, profile, resumeSessionId, history, attachments).
     const apiCallMatch = branchCode.match(
-      /return sendMessageViaApi\(([\s\S]*?)\);/,
+      /return sendMessageViaBestApi\(([\s\S]*?)\);/,
     );
 
     expect(apiCallMatch).toBeDefined();
@@ -108,7 +108,7 @@ describe("Remote/SSH Mode History Preservation", () => {
   it("local API available branch passes history to recovery wrapper", () => {
     // Extract the local API available branch
     const localApiBranch = hermesSrc.match(
-      /if \(apiServerAvailable\) \{[\s\S]*?return sendMessageViaApiWithLocalRecovery\([\s\S]*?\);[\s\S]*?\}/,
+      /if \(apiServerAvailable\) \{[\s\S]*?return sendMessageViaBestApiWithLocalRecovery\([\s\S]*?\);[\s\S]*?\}/,
     );
 
     expect(localApiBranch).toBeDefined();
@@ -116,7 +116,7 @@ describe("Remote/SSH Mode History Preservation", () => {
     const branchCode = localApiBranch![0];
 
     const wrapperCallMatch = branchCode.match(
-      /return sendMessageViaApiWithLocalRecovery\(([\s\S]*?)\);/,
+      /return sendMessageViaBestApiWithLocalRecovery\(([\s\S]*?)\);/,
     );
 
     expect(wrapperCallMatch).toBeDefined();
@@ -129,10 +129,10 @@ describe("Remote/SSH Mode History Preservation", () => {
     expect(hasHistoryArg(wrapperCallMatch![1])).toBe(true);
   });
 
-  it("local recovery wrapper forwards history to every API send", () => {
+  it("local recovery wrapper forwards history to every best-API send", () => {
     const wrapperCode = extractLocalRecoveryFunction();
     const apiCalls = Array.from(
-      wrapperCode.matchAll(/sendMessageViaApi\(([\s\S]*?)\);/g),
+      wrapperCode.matchAll(/sendMessageViaBestApi\(([\s\S]*?)\);/g),
     );
 
     // Initial local API send + retry after gateway recovery.
@@ -148,7 +148,7 @@ describe("Remote/SSH Mode History Preservation", () => {
 
     // Find all direct and local-recovery API send paths.
     const apiCalls = funcCode.matchAll(
-      /sendMessageViaApi(?:WithLocalRecovery)?\(([\s\S]*?)\);/g,
+      /sendMessageViaBestApi(?:WithLocalRecovery)?\(([\s\S]*?)\);/g,
     );
 
     const calls = Array.from(apiCalls);
@@ -160,5 +160,37 @@ describe("Remote/SSH Mode History Preservation", () => {
     for (const call of calls) {
       expect(hasHistoryArg(call[1])).toBe(true);
     }
+  });
+
+  it("sendMessageViaBestApi forwards history through chat-completions fallback", () => {
+    const bestApiMatch = hermesSrc.match(
+      /async function sendMessageViaBestApi\([\s\S]*?\): Promise<ChatHandle> \{[\s\S]*?return sendMessageViaNonGatewayApi\(([\s\S]*?)\);[\s\S]*?\}/,
+    );
+
+    expect(bestApiMatch).toBeDefined();
+
+    const bestApiParams = bestApiMatch![1]
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    expect(
+      bestApiParams.some((p) => p === "history" || p.includes("history")),
+    ).toBe(true);
+
+    const nonGatewayMatch = hermesSrc.match(
+      /async function sendMessageViaNonGatewayApi\([\s\S]*?\): Promise<ChatHandle> \{[\s\S]*?return sendMessageViaApi\(([\s\S]*?)\);[\s\S]*?\}/,
+    );
+
+    expect(nonGatewayMatch).toBeDefined();
+
+    const nonGatewayParams = nonGatewayMatch![1]
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    expect(
+      nonGatewayParams.some((p) => p === "history" || p.includes("history")),
+    ).toBe(true);
   });
 });

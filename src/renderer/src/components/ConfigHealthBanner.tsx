@@ -21,7 +21,7 @@ interface ConfigHealthBannerProps {
 
 interface Report {
   profile?: string;
-  issues: { severity: "error" | "warning" | "info" }[];
+  issues: { code: string; severity: "error" | "warning" | "info" }[];
   summary: { errors: number; warnings: number; infos: number };
 }
 
@@ -54,6 +54,18 @@ function isReportForProfile(
   return !report.profile || report.profile === expected;
 }
 
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for environments without crypto.randomUUID
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export function ConfigHealthBanner({
   profile,
   onOpenDiagnose,
@@ -62,6 +74,9 @@ export function ConfigHealthBanner({
   const [report, setReport] = useState<(Report & { ranAt: number }) | null>(
     null,
   );
+  const [showModal, setShowModal] = useState(false);
+  const [apiKeyValue, setApiKeyValue] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,6 +114,14 @@ export function ConfigHealthBanner({
 
   if (!report || report.issues.length === 0) return null;
 
+  // Only surface the banner for errors/warnings. Info-level issues are
+  // visible in Settings → Diagnose but don't demand attention in the
+  // chat header (avoids "Configuration issues detected: 1 note(s)" noise
+  // when the user is running without API_SERVER_KEY or has harmless drift).
+  if (report.summary.errors === 0 && report.summary.warnings === 0) {
+    return null;
+  }
+
   const dismissedAt = readDismissedReportStamp();
   if (dismissedAt >= report.ranAt) return null;
 
@@ -126,40 +149,165 @@ export function ConfigHealthBanner({
       t("diagnose.banner.infos", { count: report.summary.infos }),
     );
   }
+  const hasEmptyApiKey = report.issues.some(
+    (i) => i.code === "EMPTY_API_SERVER_KEY",
+  );
+  const onlyEmptyApiKey =
+    hasEmptyApiKey &&
+    report.issues.length === 1 &&
+    report.summary.errors === 0 &&
+    report.summary.warnings === 1;
+
   const summary = summaryParts.join(", ");
 
+  async function handleSaveApiKey(): Promise<void> {
+    if (!apiKeyValue.trim()) return;
+    setSaving(true);
+    try {
+      await window.hermesAPI.setEnv(
+        "API_SERVER_KEY",
+        apiKeyValue.trim(),
+        profile,
+      );
+      // Re-run the health check so the banner disappears.
+      const r = (await window.hermesAPI.rerunConfigHealth(profile)) as
+        | (Report & { ranAt: number })
+        | null;
+      setReport(r);
+      setShowModal(false);
+      setApiKeyValue("");
+    } catch {
+      // Silently fail; the user can retry.
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
-    <div
-      className={`config-health-banner config-health-banner-${worstSeverity}`}
-      role="status"
-      data-testid="config-health-banner"
-    >
-      <span className="config-health-banner-text">
-        {t("diagnose.banner.lead")} {summary}.
-      </span>
-      <div className="config-health-banner-actions">
-        {onOpenDiagnose && (
+    <>
+      <div
+        className={`config-health-banner config-health-banner-${worstSeverity}`}
+        role="status"
+        data-testid="config-health-banner"
+      >
+        <span className="config-health-banner-text">
+          {onlyEmptyApiKey
+            ? t("diagnose.apiKeyBanner.lead")
+            : `${t("diagnose.banner.lead")} ${summary}.`}
+        </span>
+        <div className="config-health-banner-actions">
+          {hasEmptyApiKey && (
+            <button
+              className="config-health-banner-link"
+              type="button"
+              onClick={() => setShowModal(true)}
+            >
+              {t("diagnose.apiKeyBanner.setNow")}
+            </button>
+          )}
+          {onOpenDiagnose && (
+            <button
+              className="config-health-banner-link"
+              type="button"
+              onClick={onOpenDiagnose}
+            >
+              {t("diagnose.banner.showDetails")}
+            </button>
+          )}
           <button
-            className="config-health-banner-link"
+            className="config-health-banner-dismiss"
             type="button"
-            onClick={onOpenDiagnose}
+            aria-label={t("common.dismiss")}
+            onClick={() => {
+              rememberDismiss(report.ranAt);
+              setReport(null);
+            }}
           >
-            {t("diagnose.banner.showDetails")}
+            <X size={14} />
           </button>
-        )}
-        <button
-          className="config-health-banner-dismiss"
-          type="button"
-          aria-label={t("common.dismiss")}
-          onClick={() => {
-            rememberDismiss(report.ranAt);
-            setReport(null);
-          }}
-        >
-          <X size={14} />
-        </button>
+        </div>
       </div>
-    </div>
+
+      {showModal && (
+        <div
+          className="models-modal-overlay"
+          onClick={() => setShowModal(false)}
+        >
+          <div className="models-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="models-modal-header">
+              <h2 className="models-modal-title">
+                {t("diagnose.apiKeyModal.title")}
+              </h2>
+              <button
+                className="btn-ghost"
+                type="button"
+                onClick={() => setShowModal(false)}
+                aria-label={t("common.close")}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="models-modal-body">
+              <p
+                style={{
+                  fontSize: 13,
+                  color: "var(--text-secondary)",
+                  margin: 0,
+                }}
+              >
+                {t("diagnose.apiKeyModal.description")}
+              </p>
+              <div className="models-modal-field">
+                <label className="models-modal-label">
+                  {t("diagnose.apiKeyModal.label")}
+                </label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    type="text"
+                    className="input"
+                    value={apiKeyValue}
+                    onChange={(e) => setApiKeyValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void handleSaveApiKey();
+                    }}
+                    placeholder={t("diagnose.apiKeyModal.placeholder")}
+                    style={{ flex: 1 }}
+                    autoFocus
+                  />
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    type="button"
+                    onClick={() => setApiKeyValue(generateUUID())}
+                  >
+                    {t("diagnose.apiKeyModal.autoGenerate")}
+                  </button>
+                </div>
+                <span className="models-modal-hint">
+                  {t("diagnose.apiKeyModal.hint")}
+                </span>
+              </div>
+            </div>
+            <div className="models-modal-footer">
+              <button
+                className="btn btn-secondary btn-sm"
+                type="button"
+                onClick={() => setShowModal(false)}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                type="button"
+                disabled={!apiKeyValue.trim() || saving}
+                onClick={() => void handleSaveApiKey()}
+              >
+                {saving ? t("common.saving") : t("common.save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

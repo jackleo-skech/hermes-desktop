@@ -118,9 +118,9 @@ jobs:
       - name: Verify native module architecture
         run: |
           set -euo pipefail
-          NODE_FILE="dist/mac-${{ matrix.arch }}/Hermes Agent.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          NODE_FILE="dist/mac-${{ matrix.arch }}/Hermes One.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
           if [ ! -f "$NODE_FILE" ]; then
-            NODE_FILE="dist/mac/Hermes Agent.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+            NODE_FILE="dist/mac/Hermes One.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
           fi
           file "$NODE_FILE"
           case "${{ matrix.arch }}" in
@@ -138,10 +138,20 @@ jobs:
             dist/*.blockmap
 
   release_linux:
-    name: Build Linux
+    name: Build Linux (${{ matrix.arch }})
     needs: prepare
     if: needs.prepare.outputs.tag_exists == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runs-on: ubuntu-latest
+            targets: AppImage deb rpm
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+            targets: AppImage
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -155,6 +165,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Rebuild native dependencies for target arch
+        run: npx electron-builder install-app-deps --arch=${{ matrix.arch }}
+
       - name: Build app
         env:
           VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
@@ -162,20 +175,30 @@ jobs:
         run: npm run build
 
       - name: Install rpmbuild
+        if: contains(matrix.targets, 'rpm')
         run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Package Linux artifacts
-        run: npx electron-builder --linux AppImage deb rpm --publish never
+        run: npx electron-builder --linux ${{ matrix.targets }} --${{ matrix.arch }} --publish never
 
-      - name: Upload artifacts
+      - name: Upload x64 artifacts
+        if: matrix.arch == 'x64'
         uses: actions/upload-artifact@v4
         with:
-          name: linux-artifacts
+          name: linux-x64-artifacts
           path: |
             dist/*.AppImage
             dist/*.deb
             dist/*.rpm
             dist/latest-linux.yml
+
+      - name: Upload arm64 artifacts
+        if: matrix.arch == 'arm64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-artifacts
+          path: |
+            dist/*.AppImage
 
   release_windows:
     name: Build Windows

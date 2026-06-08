@@ -67,6 +67,25 @@ describe("ConfigHealthBanner", () => {
     expect(screen.queryByTestId("config-health-banner")).toBeNull();
   });
 
+  it("hides when the report only contains info-level issues", async () => {
+    Object.defineProperty(window, "hermesAPI", {
+      configurable: true,
+      value: {
+        getConfigHealth: vi
+          .fn()
+          .mockResolvedValue(report([{ severity: "info" }])),
+      },
+    });
+
+    render(<ConfigHealthBanner profile="default" />);
+
+    await act(async () => {
+      await new Promise((r) => window.setTimeout(r, 10));
+    });
+
+    expect(screen.queryByTestId("config-health-banner")).toBeNull();
+  });
+
   it("ignores config-health updates for another profile", async () => {
     render(<ConfigHealthBanner profile="default" />);
 

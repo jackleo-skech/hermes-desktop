@@ -50,5 +50,17 @@ export default defineConfig(
       "react-refresh/only-export-components": "off",
     },
   },
+  {
+    // The 3D office (react-three-fiber) uses Three.js intrinsic elements whose
+    // props (position, args, rotation, intensity, ...) are flagged by the
+    // DOM-oriented `react/no-unknown-property` rule. Disable it here only.
+    files: ["src/renderer/src/screens/Office/office3d/**/*.{ts,tsx}"],
+    rules: {
+      "react/no-unknown-property": "off",
+      // Ported 3D art modules use many small internal helpers without explicit
+      // return annotations; the renderer doesn't require them here.
+      "@typescript-eslint/explicit-function-return-type": "off",
+    },
+  },
   eslintConfigPrettier,
 );

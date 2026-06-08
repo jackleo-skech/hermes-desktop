@@ -6,6 +6,7 @@ export interface ChatToolEvent {
   label?: string;
   emoji?: string;
   preview?: string;
+  result?: string;
 }
 
 function stringValue(value: unknown): string {
@@ -30,6 +31,7 @@ export function chatToolEventFromPayload(
   const callId = explicitCallId || `${name}:${label}`;
   const emoji = stringValue(payload.emoji);
   const preview = stringValue(payload.preview);
+  const result = stringValue(payload.result);
 
   return {
     callId,
@@ -39,6 +41,7 @@ export function chatToolEventFromPayload(
     ...(label ? { label } : {}),
     ...(emoji ? { emoji } : {}),
     ...(preview ? { preview } : {}),
+    ...(result ? { result } : {}),
   };
 }
 

@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
-
 const {
   TEST_HOME,
   TEST_REPO,
@@ -93,7 +91,7 @@ vi.mock("http", () => {
       _options: Record<string, unknown>,
       callback: (res: { statusCode: number; resume: () => void }) => void,
     ) => {
-      const req = new EventEmitter() as EventEmitter & {
+      const req = new EventEmitter() as InstanceType<typeof EventEmitter> & {
         destroy: () => void;
         end: () => void;
       };
@@ -312,9 +310,7 @@ describe("restartGatewayViaCli", () => {
 
     expect(hermesCliArgsSpy).not.toHaveBeenCalled();
     expect(isGatewayRunning("work")).toBe(true);
-    expect(readFileSync(profilePidFile(), "utf-8")).toBe(
-      String(gatewayPid),
-    );
+    expect(readFileSync(profilePidFile(), "utf-8")).toBe(String(gatewayPid));
   });
 
   it("serializes restart requests for different profiles instead of reusing the first result", async () => {
@@ -420,9 +416,7 @@ describe("restartGatewayViaCli", () => {
     expect(await waitForFile(pidFile)).toBe(true);
 
     const spawnedPid = Number(readFileSync(pidFile, "utf-8"));
-    await expect(restartGatewayViaCli("work", 2000, 25)).resolves.toBe(
-      false,
-    );
+    await expect(restartGatewayViaCli("work", 2000, 25)).resolves.toBe(false);
 
     expect(await waitForProcessExit(spawnedPid, 3000)).toBe(true);
     expect(isGatewayRunning("work")).toBe(false);
@@ -470,9 +464,7 @@ describe("restartGatewayViaCli", () => {
     ).resolves.toBe(false);
 
     expect(isGatewayRunning("work")).toBe(true);
-    expect(readFileSync(profilePidFile(), "utf-8")).toBe(
-      String(gatewayPid),
-    );
+    expect(readFileSync(profilePidFile(), "utf-8")).toBe(String(gatewayPid));
     expect(hermesCliArgsSpy).not.toHaveBeenCalled();
   });
 

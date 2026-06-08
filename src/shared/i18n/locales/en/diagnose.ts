@@ -11,6 +11,19 @@ export default {
     infos: "{{count}} note(s)",
     showDetails: "Show details",
   },
+  apiKeyBanner: {
+    lead: "API Server Key not set — chat will fail.",
+    setNow: "SET NOW",
+  },
+  apiKeyModal: {
+    title: "Set API Server Key",
+    description:
+      "API_SERVER_KEY is required for the Hermes gateway to authenticate requests. Set it now to enable chat.",
+    label: "API Server Key",
+    placeholder: "sk-… or any secret",
+    autoGenerate: "Auto-generate",
+    hint: "You can paste your own key or generate a random UUID.",
+  },
   fix: {
     apply: "Apply fix",
     running: "Applying…",

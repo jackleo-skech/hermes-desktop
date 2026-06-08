@@ -19,7 +19,8 @@ export default {
   subtitle: "Manage the messaging platforms Hermes Agent can connect to.",
   refreshTooltip: "Refresh platform status",
   refresh: "Refresh",
-  configHint: "Configure platforms here. Saving changes restarts the gateway when needed so adapters pick up the latest credentials.",
+  configHint:
+    "Configure platforms here. Saving changes restarts the gateway when needed so adapters pick up the latest credentials.",
   searchPlaceholder: "Search platforms or env vars",
   emptyState: "No messaging platforms match this search.",
   details: "Details",
@@ -43,7 +44,8 @@ export default {
   enable: "Enable",
   enablePlatform: "Enable platform",
   strongWarning: "Strong warning",
-  riskDesc: "{{name}} lets this messaging platform drive sensitive local tools. Enable it only for trusted, private channels and known users.",
+  riskDesc:
+    "{{name}} lets this messaging platform drive sensitive local tools. Enable it only for trusted, private channels and known users.",
   enableAnyway: "Enable anyway",
   states: {
     disabled: "Disabled",
@@ -52,5 +54,14 @@ export default {
     error: "Error",
     ready: "Ready",
     configured: "Configured",
+  },
+  apiServerKey: {
+    title: "API Server Key",
+    configured: "Key is configured",
+    missing: "Key is missing — chat will fail without it.",
+    generate: "Generate key",
+    regenerating: "Generating…",
+    generateHint:
+      "This key is shared between the desktop and the local gateway. Generating a new one restarts the gateway automatically.",
   },
 } as const;

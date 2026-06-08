@@ -1,5 +1,41 @@
 import type { ChatToolEvent } from "../../../../shared/chat-stream";
-import type { ChatMessage, ToolCallMessage } from "./types";
+import type { ChatMessage, ToolCallMessage, ToolResultMessage } from "./types";
+
+const TOOL_PROGRESS_EMOJI_RE = /^(\p{Extended_Pictographic}|\p{Emoji_Presentation})\s+(.+)$/u;
+
+function toolProgressToNameAndPreview(progress: string): {
+  emoji?: string;
+  name: string;
+  preview: string;
+} {
+  const trimmed = progress.trim();
+  const emojiMatch = TOOL_PROGRESS_EMOJI_RE.exec(trimmed);
+  const emoji = emojiMatch?.[1];
+  const text = (emojiMatch?.[2] || trimmed).trim();
+  const firstWord = text.split(/\s+/)[0] || "tool";
+  const name =
+    firstWord === "python" || firstWord === "python3" || firstWord === "cmd"
+      ? "terminal"
+      : firstWord;
+  return {
+    ...(emoji ? { emoji } : {}),
+    name,
+    preview: text,
+  };
+}
+
+export function liveToolEventFromProgress(progress: string): ChatToolEvent {
+  const { emoji, name, preview } = toolProgressToNameAndPreview(progress);
+  return {
+    callId: `progress:${name}:${preview}`,
+    hasStableCallId: false,
+    name,
+    status: "running",
+    label: preview,
+    ...(emoji ? { emoji } : {}),
+    preview,
+  };
+}
 
 function toolEventArgs(event: ChatToolEvent): string {
   return event.preview || event.label || "";
@@ -18,11 +54,6 @@ function updatedToolArgs(
     return current.args;
   }
   return nextArgs;
-}
-
-function isBubbleMessage(msg: ChatMessage): boolean {
-  const kind = (msg as { kind?: string }).kind;
-  return !kind || kind === "user" || kind === "assistant";
 }
 
 function syntheticPrefix(event: ChatToolEvent): string {
@@ -75,6 +106,26 @@ function findLatestRunningSyntheticToolIndex(
   return -1;
 }
 
+function findLatestRunningSyntheticToolByNameIndex(
+  messages: ReadonlyArray<ChatMessage>,
+  event: ChatToolEvent,
+): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") break;
+    if (
+      "kind" in msg &&
+      msg.kind === "tool_call" &&
+      msg.status === "running" &&
+      msg.name === event.name &&
+      (msg.callId.startsWith("live-tool:") || msg.id.includes("live-tool:"))
+    ) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function activeTurnSyntheticCount(
   messages: ReadonlyArray<ChatMessage>,
   event: ChatToolEvent,
@@ -95,11 +146,57 @@ function activeTurnSyntheticCount(
 }
 
 function liveToolInsertIndex(messages: ReadonlyArray<ChatMessage>): number {
-  const last = messages[messages.length - 1];
-  if (last && last.role === "agent" && isBubbleMessage(last)) {
-    return messages.length - 1;
-  }
   return messages.length;
+}
+
+function findToolResultIndex(
+  messages: ReadonlyArray<ChatMessage>,
+  callId: string,
+): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") break;
+    if (
+      "kind" in msg &&
+      msg.kind === "tool_result" &&
+      msg.callId === callId
+    ) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function upsertToolResultAfterCall(
+  messages: ReadonlyArray<ChatMessage>,
+  toolIndex: number,
+  event: ChatToolEvent,
+): ChatMessage[] {
+  const result = event.result?.trim();
+  if (!result) return [...messages];
+
+  const call = messages[toolIndex] as ToolCallMessage | undefined;
+  const callId = call?.callId || event.callId;
+  const existingIndex = findToolResultIndex(messages, callId);
+  const row: ToolResultMessage = {
+    id: `tool-result-${callId}`,
+    kind: "tool_result",
+    role: "agent",
+    callId,
+    name: event.name || call?.name || "tool",
+    content: result,
+  };
+
+  if (existingIndex >= 0) {
+    return [
+      ...messages.slice(0, existingIndex),
+      row,
+      ...messages.slice(existingIndex + 1),
+    ];
+  }
+
+  const insertAt = Math.min(toolIndex + 1, messages.length);
+  return [...messages.slice(0, insertAt), row, ...messages.slice(insertAt)];
 }
 
 function findActiveTurnToolIndex(
@@ -107,7 +204,14 @@ function findActiveTurnToolIndex(
   event: ChatToolEvent,
 ): number {
   if (event.hasStableCallId !== false) {
-    return findStableToolIndex(messages, event);
+    const stableIndex = findStableToolIndex(messages, event);
+    if (stableIndex >= 0) return stableIndex;
+    const syntheticIndex = findLatestRunningSyntheticToolByNameIndex(
+      messages,
+      event,
+    );
+    if (syntheticIndex >= 0) return syntheticIndex;
+    return -1;
   }
   if (event.status === "running") {
     return -1;
@@ -122,17 +226,22 @@ export function upsertLiveToolEvent(
   const index = findActiveTurnToolIndex(messages, event);
   if (index >= 0) {
     const current = messages[index] as ToolCallMessage;
-    return [
+    const callId =
+      event.hasStableCallId === false
+        ? current.callId
+        : event.callId || current.callId;
+    const updated = [
       ...messages.slice(0, index),
       {
         ...current,
-        callId: event.callId || current.callId,
+        callId,
         name: event.name || current.name,
         args: updatedToolArgs(current, event),
         status: event.status,
       },
       ...messages.slice(index + 1),
     ];
+    return upsertToolResultAfterCall(updated, index, event);
   }
 
   const callId =
@@ -149,5 +258,10 @@ export function upsertLiveToolEvent(
     args: toolEventArgs(event),
     status: event.status,
   };
-  return [...messages.slice(0, insertAt), row, ...messages.slice(insertAt)];
+  const inserted = [
+    ...messages.slice(0, insertAt),
+    row,
+    ...messages.slice(insertAt),
+  ];
+  return upsertToolResultAfterCall(inserted, insertAt, event);
 }

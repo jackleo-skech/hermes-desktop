@@ -21,6 +21,7 @@ describe("Gateway screen recovery controls", () => {
       value: {
         getEnv: vi.fn().mockResolvedValue({}),
         gatewayStatus: vi.fn().mockResolvedValue(true),
+        getApiServerKeyStatus: vi.fn().mockResolvedValue({ hasKey: true }),
         getPlatformEnabled: vi.fn().mockResolvedValue({}),
         restartGateway: vi.fn().mockResolvedValue(false),
         startGateway: vi.fn().mockResolvedValue(false),

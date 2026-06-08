@@ -261,9 +261,58 @@ export async function sshUninstallSkill(
   try {
     const stdout = await sshExec(
       config,
-      `hermes skills uninstall ${shellQuote(name)} 2>&1`,
+      `hermes skills uninstall ${shellQuote(name)} --yes 2>&1`,
     );
-    return classifySkillCliOutput(stdout ?? "");
+    const result = classifySkillCliOutput(stdout ?? "");
+    if (result.success) return result;
+
+    // CLI didn't find it — try direct filesystem removal on the remote.
+    // Walk ~/.hermes/skills/*/ to find a directory whose SKILL.md frontmatter
+    // name or directory basename matches `name`.
+    await sshExec(
+      config,
+      `python3 -c '
+import os, sys
+name = ${shellQuote(name)}
+home = os.path.expanduser("~")
+skills_dir = os.path.join(home, ".hermes", "skills")
+if not os.path.isdir(skills_dir):
+    sys.exit(0)
+for cat in os.listdir(skills_dir):
+    cat_path = os.path.join(skills_dir, cat)
+    if not os.path.isdir(cat_path):
+        continue
+    for entry in os.listdir(cat_path):
+        entry_path = os.path.join(cat_path, entry)
+        if not os.path.isdir(entry_path):
+            continue
+        skill_file = os.path.join(entry_path, "SKILL.md")
+        if not os.path.isfile(skill_file):
+            continue
+        skill_name = entry
+        try:
+            with open(skill_file, "r", encoding="utf-8") as f:
+                lines = f.read(4000).splitlines()
+            in_fm = False
+            for line in lines:
+                if line.strip() == "---":
+                    if not in_fm:
+                        in_fm = True
+                        continue
+                    else:
+                        break
+                if in_fm and line.strip().startswith("name:"):
+                    skill_name = line.split(":", 1)[1].strip().strip("\"'")
+                    break
+        except Exception:
+            pass
+        if skill_name == name or entry == name:
+            import shutil
+            shutil.rmtree(entry_path)
+            sys.exit(0)
+' 2>&1`,
+    );
+    return { success: true };
   } catch (err) {
     return { success: false, error: (err as Error).message };
   }

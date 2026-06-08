@@ -1,11 +1,15 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ChatMessage, UsageState } from "../types";
 import {
   dbItemsToChatMessages,
   reconcileStreamedWithDb,
   type DbHistoryItem,
 } from "../sessionHistory";
-import { upsertLiveToolEvent } from "../liveToolEvents";
+import {
+  liveToolEventFromProgress,
+  upsertLiveToolEvent,
+} from "../liveToolEvents";
+import { upsertLiveReasoningChunk } from "../liveReasoningEvents";
 
 interface UseChatIPCArgs {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
@@ -28,6 +32,8 @@ export function useChatIPC({
   setIsLoading,
   setUsage,
 }: UseChatIPCArgs): void {
+  const reasoningSegmentClosedRef = useRef(false);
+
   useEffect(() => {
     const cleanupChunk = window.hermesAPI.onChatChunk((chunk) => {
       setMessages((prev) => {
@@ -53,46 +59,19 @@ export function useChatIPC({
     });
 
     // Streaming reasoning / thinking bubbles for the current turn (#352).
-    // Reasoning typically arrives BEFORE content (DeepSeek, o1/o3), but
-    // we don't rely on that order — we find the reasoning row for the
-    // active turn (last agent reasoning row since the most recent user
-    // message) and append to it. If no such row exists yet, create one
-    // and place it BEFORE any assistant content bubbles in the same
-    // turn so the visual order is reasoning → answer.
+    // Keep chunk order relative to tool rows. A new thought after a tool call
+    // should become a new block there, not mutate the first thought block.
     const cleanupReasoning = window.hermesAPI.onChatReasoningChunk((chunk) => {
       if (!chunk) return;
-      setMessages((prev) => {
-        let insertAt = prev.length;
-        for (let i = prev.length - 1; i >= 0; i--) {
-          const m = prev[i];
-          if (m.role === "user") break;
-          // Append to the active turn's reasoning row if one exists.
-          if ("kind" in m && m.kind === "reasoning") {
-            return [
-              ...prev.slice(0, i),
-              { ...m, text: m.text + chunk },
-              ...prev.slice(i + 1),
-            ];
-          }
-          // Otherwise track the earliest in-turn agent row so the new
-          // reasoning bubble lands ahead of it (typical case: content
-          // bubble started first because reasoning arrived a tick late).
-          insertAt = i;
-        }
-        return [
-          ...prev.slice(0, insertAt),
-          {
-            id: `reasoning-${Date.now()}`,
-            kind: "reasoning",
-            role: "agent",
-            text: chunk,
-          },
-          ...prev.slice(insertAt),
-        ];
-      });
+      const forceNewSegment = reasoningSegmentClosedRef.current;
+      reasoningSegmentClosedRef.current = false;
+      setMessages((prev) =>
+        upsertLiveReasoningChunk(prev, chunk, Date.now(), forceNewSegment),
+      );
     });
 
     const cleanupDone = window.hermesAPI.onChatDone(async (sessionId) => {
+      reasoningSegmentClosedRef.current = false;
       if (sessionId) setHermesSessionId(sessionId);
       setToolProgress(null);
       setIsLoading(false);
@@ -122,6 +101,7 @@ export function useChatIPC({
     });
 
     const cleanupError = window.hermesAPI.onChatError((error) => {
+      reasoningSegmentClosedRef.current = false;
       setMessages((prev) => [
         ...prev,
         {
@@ -135,11 +115,17 @@ export function useChatIPC({
     });
 
     const cleanupToolProgress = window.hermesAPI.onChatToolProgress((tool) => {
-      setToolProgress(tool);
+      setToolProgress(null);
+      if (!tool.trim()) return;
+      reasoningSegmentClosedRef.current = true;
+      setMessages((prev) =>
+        upsertLiveToolEvent(prev, liveToolEventFromProgress(tool)),
+      );
     });
 
     const cleanupToolEvent = window.hermesAPI.onChatToolEvent((toolEvent) => {
       setToolProgress(null);
+      reasoningSegmentClosedRef.current = true;
       setMessages((prev) => upsertLiveToolEvent(prev, toolEvent));
     });
 

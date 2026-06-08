@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { ChevronRight, Spinner, Wrench } from "../../assets/icons";
+import { Brain, ChevronRight, Spinner, Wrench } from "../../assets/icons";
 import { useI18n } from "../../components/useI18n";
 import { AttachmentChip } from "../../components/AttachmentChip";
 import { HermesAvatar, AvatarSpacer } from "./MessageRow";
@@ -9,54 +9,6 @@ import type {
   ToolCallMessage,
   ToolResultMessage,
 } from "./types";
-
-/* ── Shared primitive ─────────────────────────────────────────────────── */
-
-interface CollapsibleSectionProps {
-  variant: "reasoning" | "tool-call" | "tool-result";
-  header: React.ReactNode;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}
-
-const Chevron = memo(function Chevron({
-  open,
-}: {
-  open: boolean;
-}): React.JSX.Element {
-  return (
-    <span
-      className={`chat-history-chevron ${
-        open ? "chat-history-chevron--open" : ""
-      }`}
-      aria-hidden="true"
-    >
-      ▸
-    </span>
-  );
-});
-
-const CollapsibleSection = memo(function CollapsibleSection({
-  variant,
-  header,
-  defaultOpen = false,
-  children,
-}: CollapsibleSectionProps): React.JSX.Element {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <details
-      className={`chat-history chat-history--${variant}`}
-      open={open}
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-    >
-      <summary className="chat-history-header">
-        <Chevron open={open} />
-        {header}
-      </summary>
-      <div className="chat-history-body">{children}</div>
-    </details>
-  );
-});
 
 /* ── Reasoning ────────────────────────────────────────────────────────── */
 
@@ -74,6 +26,7 @@ export const ReasoningRow = memo(function ReasoningRow({
   showAvatar?: boolean;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const [open, setOpen] = useState(false);
   const lineCount = msg.text.split("\n").length;
   return (
     <div
@@ -82,21 +35,45 @@ export const ReasoningRow = memo(function ReasoningRow({
       }`}
     >
       {showAvatar ? <HermesAvatar /> : <AvatarSpacer />}
-      <CollapsibleSection
-        variant="reasoning"
-        header={
-          <span className="chat-history-label">
-            <span className="chat-history-title">
-              {active ? t("chat.thinking") : t("chat.thought")}
-            </span>
-            <span className="chat-history-meta">
-              {lineCount} {lineCount === 1 ? "line" : "lines"}
-            </span>
-          </span>
-        }
+      <div
+        className={`chat-reasoning-group${
+          active ? " chat-reasoning-group--active" : ""
+        }`}
       >
-        <pre className="chat-history-pre">{msg.text}</pre>
-      </CollapsibleSection>
+        <button
+          type="button"
+          className="chat-reasoning-group-summary"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <ChevronRight
+            size={14}
+            className={`chat-reasoning-group-chevron${
+              open ? " chat-reasoning-group-chevron--open" : ""
+            }`}
+          />
+          {active ? (
+            <Spinner size={13} className="chat-reasoning-group-spinner" />
+          ) : (
+            <Brain size={13} className="chat-reasoning-group-icon" />
+          )}
+          <span className="chat-reasoning-group-title">
+            {active ? t("chat.thinking") : t("chat.thought")}
+          </span>
+          <span className="chat-reasoning-group-meta">
+            {lineCount} {lineCount === 1 ? "line" : "lines"}
+          </span>
+        </button>
+        <div
+          className={`chat-tool-collapse${
+            open ? " chat-tool-collapse--open" : ""
+          }`}
+        >
+          <div className="chat-tool-collapse-inner">
+            <pre className="chat-history-pre">{msg.text}</pre>
+          </div>
+        </div>
+      </div>
     </div>
   );
 });
@@ -128,6 +105,12 @@ function countLines(text: string): number {
 
 function isToolCall(msg: ToolItem): msg is ToolCallMessage {
   return msg.kind === "tool_call";
+}
+
+export function toolActivityGroupTitle(items: ToolItem[]): string {
+  const toolCallCount = items.filter(isToolCall).length;
+  if (toolCallCount > 1) return `${toolCallCount} tools called`;
+  return items[items.length - 1]?.name ?? "tool";
 }
 
 function resultMeta(msg: ToolResultMessage): string {
@@ -221,6 +204,7 @@ export const ToolActivityGroup = memo(function ToolActivityGroup({
   const last = items[items.length - 1];
   const count = items.length;
   const detail = itemDetail(last);
+  const title = toolActivityGroupTitle(items);
 
   return (
     <div
@@ -249,7 +233,7 @@ export const ToolActivityGroup = memo(function ToolActivityGroup({
           ) : (
             <Wrench size={13} className="chat-tool-group-icon" />
           )}
-          <span className="chat-tool-group-name">{last.name}</span>
+          <span className="chat-tool-group-name">{title}</span>
           {detail && <span className="chat-tool-group-detail">{detail}</span>}
           <span className="chat-tool-group-count">
             {count} {count === 1 ? "step" : "steps"}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { Toaster } from "react-hot-toast";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { FontProvider } from "./components/FontProvider";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -11,9 +12,9 @@ import { captureScreenView } from "./utils/analytics";
 
 type Screen = "splash" | "welcome" | "installing" | "setup" | "main";
 
-// Minimum time the splash stays visible so the brand animation plays
-// through. Tracks the splash logo fade-in duration in main.css.
-const SPLASH_MIN_MS = 1300;
+// Minimum time the splash stays visible so the background video plays
+// through. Gateway / config checks happen during this window.
+const SPLASH_MIN_MS = 3000;
 
 function App(): React.JSX.Element {
   const [screen, setScreen] = useState<Screen>("splash");
@@ -27,6 +28,9 @@ function App(): React.JSX.Element {
   // which previously trapped restricted-network users in a reinstall
   // loop on every launch (#130).
   const [verifyWarning, setVerifyWarning] = useState(false);
+  const [splashStatus, setSplashStatus] = useState<string | undefined>(
+    undefined,
+  );
   const isMac = window.electron?.process?.platform === "darwin";
 
   const runInstallCheck = useCallback(async () => {
@@ -36,12 +40,13 @@ function App(): React.JSX.Element {
     let isRemote = false;
 
     try {
+      setSplashStatus("Checking connection…");
       const conn = await window.hermesAPI.getConnectionConfig();
       isRemote = conn.mode === "remote" || conn.mode === "ssh";
       setConnectionMode(conn.mode);
 
       if (conn.mode === "ssh" && conn.ssh) {
-        // Start (or ensure) the SSH tunnel, then go straight to main
+        setSplashStatus("Starting SSH tunnel…");
         try {
           await window.hermesAPI.startSshTunnel();
           next = "main";
@@ -50,6 +55,7 @@ function App(): React.JSX.Element {
           next = "welcome";
         }
       } else if (conn.mode === "remote" && conn.remoteUrl) {
+        setSplashStatus("Testing remote connection…");
         const ok = await window.hermesAPI.testRemoteConnection(conn.remoteUrl);
         if (ok) {
           next = "main";
@@ -58,6 +64,7 @@ function App(): React.JSX.Element {
           next = "welcome";
         }
       } else {
+        setSplashStatus("Checking local install…");
         const status = await window.hermesAPI.checkInstall();
         if (!status.installed) {
           next = "welcome";
@@ -66,11 +73,32 @@ function App(): React.JSX.Element {
         } else {
           next = "main";
         }
+
+        // Warm config-health and gateway status in the background while the
+        // splash is still visible so the first render is snappy. Cap at 800ms
+        // so it never pushes us past the 3s minimum.
+        if (next === "main") {
+          setSplashStatus("Checking configuration…");
+          await Promise.race([
+            Promise.all([
+              window.hermesAPI
+                .getConfigHealth()
+                .catch(() => null)
+                .then(() => undefined),
+              window.hermesAPI
+                .gatewayStatus()
+                .catch(() => null)
+                .then(() => undefined),
+            ]),
+            new Promise<void>((r) => setTimeout(r, 800)),
+          ]);
+        }
       }
     } catch {
       next = "welcome";
     }
 
+    setSplashStatus(undefined);
     if (error) setInstallError(error);
 
     const elapsed = Date.now() - startedAt;
@@ -150,7 +178,12 @@ function App(): React.JSX.Element {
   function renderScreen(): React.JSX.Element {
     switch (screen) {
       case "splash":
-        return <SplashScreen onFinished={handleSplashFinished} />;
+        return (
+          <SplashScreen
+            onFinished={handleSplashFinished}
+            status={splashStatus}
+          />
+        );
       case "welcome":
         return (
           <Welcome
@@ -197,6 +230,18 @@ function App(): React.JSX.Element {
             {isMac && <div className="drag-region" />}
             <div className="app-content">{renderScreen()}</div>
           </div>
+          <Toaster
+            position="bottom-right"
+            reverseOrder={false}
+            toastOptions={{
+              style: {
+                background: "var(--bg-elevated)",
+                color: "var(--text-primary)",
+                border: "1px solid var(--border-bright)",
+                fontSize: 13,
+              },
+            }}
+          />
         </ErrorBoundary>
       </FontProvider>
     </ThemeProvider>

@@ -14,6 +14,8 @@ import { join } from "path";
 import { homedir } from "os";
 import http from "http";
 import https from "https";
+import net from "net";
+import WebSocket from "ws";
 import {
   HERMES_HOME,
   HERMES_REPO,
@@ -24,6 +26,7 @@ import {
 import {
   getApiServerKey,
   getConnectionConfig,
+  getConfigValue,
   getModelConfig,
   readEnv,
 } from "./config";
@@ -51,6 +54,23 @@ import {
   chatToolProgressLabel,
   type ChatToolEvent,
 } from "../shared/chat-stream";
+import {
+  chatToolEventFromRunEvent,
+  parseRunSseBlock,
+  runCompletedUsage,
+  runEventReasoningText,
+  supportsHermesRunsTransport,
+  type HermesApiCapabilities,
+} from "./run-stream";
+import {
+  gatewayCompletionSuffix,
+  gatewayMessageCompleteText,
+  gatewayMessageDelta,
+  gatewayReasoningText,
+  gatewayToolEvent,
+  gatewayUsage,
+  type GatewayEvent,
+} from "./tui-gateway-stream";
 import {
   hostDerivedEnvKeyForUrl,
   shouldPruneOpenRouterApiKey,
@@ -138,6 +158,104 @@ export function getRemoteAuthHeader(): Record<string, string> {
     return { Authorization: `Bearer ${conn.apiKey}` };
   }
   return {};
+}
+
+function getApiAuthHeaders(profile?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    ...getRemoteAuthHeader(),
+  };
+  // Local API server key (API_SERVER_KEY in the profile's .env /
+  // config.yaml) only applies in local mode — in remote/SSH mode the
+  // remote endpoint's own auth header is authoritative.
+  if (!isRemoteMode()) {
+    const apiServerKey = getApiServerKey(profile);
+    if (apiServerKey) {
+      headers.Authorization = `Bearer ${apiServerKey}`;
+    }
+  }
+  return headers;
+}
+
+function getJsonApiHeaders(
+  profile: string | undefined,
+  bodyBuf: Buffer,
+): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "Content-Length": String(bodyBuf.length),
+    ...getApiAuthHeaders(profile),
+  };
+}
+
+function capabilityCacheKey(profile?: string): string {
+  const auth = getApiAuthHeaders(profile).Authorization ? "auth" : "anon";
+  return `${getApiUrl(profile)}|${auth}`;
+}
+
+async function getApiCapabilities(
+  profile?: string,
+): Promise<HermesApiCapabilities | null> {
+  let key: string;
+  try {
+    key = capabilityCacheKey(profile);
+  } catch {
+    return null;
+  }
+  const cached = capabilitiesCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const url = `${getApiUrl(profile)}/v1/capabilities`;
+  const requester = url.startsWith("https") ? https : http;
+  const value = await new Promise<HermesApiCapabilities | null>((resolve) => {
+    let done = false;
+    let timeout: NodeJS.Timeout | null = null;
+    const finish = (result: HermesApiCapabilities | null): void => {
+      if (done) return;
+      done = true;
+      if (timeout) clearTimeout(timeout);
+      resolve(result);
+    };
+    const req = requester.request(
+      url,
+      {
+        method: "GET",
+        headers: getApiAuthHeaders(profile),
+        timeout: CAPABILITIES_TIMEOUT_MS,
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (chunk) => {
+          raw += chunk.toString();
+        });
+        res.on("end", () => {
+          if (res.statusCode !== 200) {
+            finish(null);
+            return;
+          }
+          try {
+            finish(JSON.parse(raw) as HermesApiCapabilities);
+          } catch {
+            finish(null);
+          }
+        });
+      },
+    );
+    req.on("timeout", () => {
+      req.destroy();
+      finish(null);
+    });
+    req.on("error", () => finish(null));
+    timeout = setTimeout(() => {
+      req.destroy();
+      finish(null);
+    }, CAPABILITIES_TIMEOUT_MS);
+    req.end();
+  });
+  capabilitiesCache.set(key, {
+    value,
+    expiresAt: Date.now() + CAPABILITIES_CACHE_MS,
+  });
+  return value;
 }
 
 function resolveRemoteApiKey(url: string, apiKey?: string): string {
@@ -234,6 +352,458 @@ export async function transcribeAudio(
 interface ChatHandle {
   abort: () => void;
 }
+
+interface GatewayRpcFrame {
+  error?: { message?: string };
+  id?: string | number | null;
+  method?: string;
+  params?: GatewayEvent;
+  result?: unknown;
+}
+
+interface GatewayPending {
+  reject: (error: Error) => void;
+  resolve: (value: unknown) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+type GatewayEventHandler = (event: GatewayEvent) => void;
+
+const DASHBOARD_GATEWAY_PORT_FLOOR = 9120;
+const DASHBOARD_GATEWAY_PORT_CEILING = 9199;
+
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+async function pickDashboardPort(): Promise<number> {
+  for (
+    let port = DASHBOARD_GATEWAY_PORT_FLOOR;
+    port <= DASHBOARD_GATEWAY_PORT_CEILING;
+    port += 1
+  ) {
+    if (await isPortAvailable(port)) return port;
+  }
+  throw new Error(
+    `No free localhost port in ${DASHBOARD_GATEWAY_PORT_FLOOR}-${DASHBOARD_GATEWAY_PORT_CEILING}`,
+  );
+}
+
+function isDashboardReady(baseUrl: string, token: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      `${baseUrl}/api/status`,
+      {
+        method: "GET",
+        headers: { "X-Hermes-Session-Token": token },
+        timeout: 1500,
+      },
+      (res) => {
+        resolve((res.statusCode || 500) < 400);
+        res.resume();
+      },
+    );
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.end();
+  });
+}
+
+async function waitForDashboardReady(
+  baseUrl: string,
+  token: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isDashboardReady(baseUrl, token)) return;
+    await delay(500);
+  }
+  throw new Error("Hermes dashboard gateway did not become ready");
+}
+
+class TuiGatewayClient {
+  private handlers = new Set<GatewayEventHandler>();
+  private nextId = 0;
+  private pending = new Map<string, GatewayPending>();
+  private port = 0;
+  private proc: ChildProcess | null = null;
+  private recentEvents: GatewayEvent[] = [];
+  private ready: Promise<void> | null = null;
+  private readyReject: ((error: Error) => void) | null = null;
+  private readyResolve: (() => void) | null = null;
+  private token = "";
+  private ws: WebSocket | null = null;
+
+  constructor(
+    private readonly key: string,
+    private readonly env: Record<string, string>,
+  ) {}
+
+  onEvent(handler: GatewayEventHandler): () => void {
+    this.handlers.add(handler);
+    return () => this.handlers.delete(handler);
+  }
+
+  findRecentEvent(
+    predicate: (event: GatewayEvent) => boolean,
+  ): GatewayEvent | null {
+    for (let i = this.recentEvents.length - 1; i >= 0; i--) {
+      const event = this.recentEvents[i];
+      if (predicate(event)) return event;
+    }
+    return null;
+  }
+
+  async request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs = 120_000,
+  ): Promise<T> {
+    await this.start();
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("Hermes dashboard gateway stream is not connected");
+    }
+
+    const id = `r${++this.nextId}`;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Hermes gateway request timed out: ${method}`));
+      }, timeoutMs);
+      timer.unref?.();
+      this.pending.set(id, {
+        reject,
+        resolve: (value) => resolve(value as T),
+        timer,
+      });
+
+      try {
+        this.ws!.send(JSON.stringify({ id, jsonrpc: "2.0", method, params }));
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  async start(): Promise<void> {
+    if (this.ready) return this.ready;
+
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.readyResolve = resolve;
+      this.readyReject = reject;
+    });
+
+    void this.startDashboardBackend()
+      .then(() => this.readyResolve?.())
+      .catch((error) => {
+        const err = error instanceof Error ? error : new Error(String(error));
+        this.readyReject?.(err);
+        this.rejectPending(err);
+        this.reset();
+      });
+
+    return this.ready;
+  }
+
+  stop(): void {
+    this.ws?.close();
+    this.proc?.kill("SIGTERM");
+    this.rejectPending(new Error("Hermes dashboard gateway stream stopped"));
+    this.reset();
+  }
+
+  private async startDashboardBackend(): Promise<void> {
+    if (!existsSync(tuiGatewayPython())) {
+      throw new Error(`Python interpreter not found at ${tuiGatewayPython()}`);
+    }
+    if (!existsSync(HERMES_REPO)) {
+      throw new Error(`hermes-agent repo not found at ${HERMES_REPO}`);
+    }
+
+    this.port = await pickDashboardPort();
+    this.token = randomUUID();
+    const dashboardEnv = {
+      ...this.env,
+      HERMES_DASHBOARD_SESSION_TOKEN: this.token,
+      HERMES_DASHBOARD_TUI: "1",
+    };
+    const args = hermesCliArgs([
+      "dashboard",
+      "--no-open",
+      "--tui",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(this.port),
+    ]);
+    const proc = spawn(tuiGatewayPython(), args, {
+      cwd: HERMES_REPO,
+      env: dashboardEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+      ...HIDDEN_SUBPROCESS_OPTIONS,
+    });
+    this.proc = proc;
+
+    const exitBeforeReady = new Promise<never>((_resolve, reject) => {
+      proc.once("error", reject);
+      proc.once("exit", (code, signal) => {
+        reject(
+          new Error(
+            `Hermes dashboard gateway exited before ready (${signal || code})`,
+          ),
+        );
+      });
+    });
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      const line = stripAnsi(chunk.toString()).trim();
+      if (line) console.log(`[dashboard-gateway:${this.key}] ${line}`);
+    });
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      const line = stripAnsi(chunk.toString()).trim();
+      if (line) console.warn(`[dashboard-gateway:${this.key}] ${line}`);
+    });
+
+    const baseUrl = `http://127.0.0.1:${this.port}`;
+    await Promise.race([
+      waitForDashboardReady(baseUrl, this.token, 45_000),
+      exitBeforeReady,
+    ]);
+    await Promise.race([
+      this.connectWebSocket(
+        `ws://127.0.0.1:${this.port}/api/ws?token=${encodeURIComponent(this.token)}`,
+      ),
+      exitBeforeReady,
+    ]);
+
+    proc.removeAllListeners("exit");
+    proc.once("exit", (code, signal) => {
+      const error = new Error(
+        `Hermes dashboard gateway exited (${signal || code})`,
+      );
+      this.rejectPending(error);
+      this.reset();
+    });
+  }
+
+  private connectWebSocket(url: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url);
+      this.ws = ws;
+      const timer = setTimeout(() => {
+        reject(new Error("Hermes dashboard gateway WebSocket timed out"));
+        ws.close();
+      }, 15_000);
+      timer.unref?.();
+
+      ws.on("open", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      ws.on("message", (data) => this.handleFrame(wsDataToString(data)));
+      ws.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      });
+      ws.on("close", () => {
+        if (this.ws !== ws) return;
+        const error = new Error("Hermes dashboard gateway WebSocket closed");
+        this.rejectPending(error);
+        this.reset();
+      });
+    });
+  }
+
+  private handleFrame(raw: string): void {
+    let frame: GatewayRpcFrame;
+    try {
+      frame = JSON.parse(raw) as GatewayRpcFrame;
+    } catch {
+      return;
+    }
+
+    if (frame.id != null) {
+      const pending = this.pending.get(String(frame.id));
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(String(frame.id));
+      if (frame.error) {
+        pending.reject(new Error(frame.error.message || "Hermes RPC failed"));
+      } else {
+        pending.resolve(frame.result);
+      }
+      return;
+    }
+
+    if (frame.method !== "event" || !frame.params?.type) return;
+    this.recentEvents.push(frame.params);
+    if (this.recentEvents.length > 50) {
+      this.recentEvents.splice(0, this.recentEvents.length - 50);
+    }
+    if (frame.params.type === "gateway.ready") {
+      this.readyResolve?.();
+    }
+    for (const handler of this.handlers) {
+      handler(frame.params);
+    }
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  private reset(): void {
+    const ws = this.ws;
+    const proc = this.proc;
+    this.ws = null;
+    try {
+      ws?.removeAllListeners();
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+    } catch {
+      // best-effort cleanup
+    }
+    this.proc = null;
+    try {
+      if (proc && !proc.killed && proc.exitCode === null) proc.kill("SIGTERM");
+    } catch {
+      // best-effort cleanup
+    }
+    this.port = 0;
+    this.recentEvents = [];
+    this.ready = null;
+    this.readyReject = null;
+    this.readyResolve = null;
+    this.token = "";
+  }
+}
+
+function waitForGatewayEvent(
+  client: TuiGatewayClient,
+  predicate: (event: GatewayEvent) => boolean,
+  timeoutMs: number,
+): Promise<GatewayEvent> {
+  const recent = client.findRecentEvent(predicate);
+  if (recent) return Promise.resolve(recent);
+
+  return new Promise((resolve, reject) => {
+    let cleanup = (): void => undefined;
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for Hermes gateway readiness"));
+    }, timeoutMs);
+    timer.unref?.();
+    cleanup = client.onEvent((event) => {
+      if (!predicate(event)) return;
+      clearTimeout(timer);
+      cleanup();
+      resolve(event);
+    });
+  });
+}
+
+function wsDataToString(
+  data: string | Buffer | ArrayBuffer | Buffer[],
+): string {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf-8");
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf-8");
+  return Buffer.from(data).toString("utf-8");
+}
+
+const tuiGatewayClients = new Map<string, TuiGatewayClient>();
+
+function tuiGatewayPython(): string {
+  if (process.platform === "win32" && /pythonw\.exe$/i.test(HERMES_PYTHON)) {
+    return HERMES_PYTHON.replace(/pythonw\.exe$/i, "python.exe");
+  }
+  return HERMES_PYTHON;
+}
+
+function tuiGatewayEnv(profile?: string): Record<string, string> {
+  const resolved = resolveProfile(profile);
+  const envPathDelimiter = process.platform === "win32" ? ";" : ":";
+  const env: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+    PATH: getEnhancedPath(),
+    HOME: homedir(),
+    HERMES_HOME: profileHome(resolved),
+    HERMES_PYTHON_SRC_ROOT: HERMES_REPO,
+    PYTHONUNBUFFERED: "1",
+  };
+  const existingPythonPath = env.PYTHONPATH?.trim();
+  env.PYTHONPATH = existingPythonPath
+    ? `${HERMES_REPO}${envPathDelimiter}${existingPythonPath}`
+    : HERMES_REPO;
+  if (resolved) env.HERMES_PROFILE = resolved;
+  for (const [key, value] of Object.entries(readEnv(profile))) {
+    if (value) env[key] = value;
+  }
+  return env;
+}
+
+function getTuiGatewayClient(profile?: string): TuiGatewayClient {
+  const key = profileKey(profile);
+  let client = tuiGatewayClients.get(key);
+  if (!client) {
+    client = new TuiGatewayClient(key, tuiGatewayEnv(profile));
+    tuiGatewayClients.set(key, client);
+  }
+  return client;
+}
+
+function shouldUseTuiGatewayClient(): boolean {
+  return (
+    process.env.VITEST !== "true" &&
+    process.env.NODE_ENV !== "test" &&
+    process.env.npm_lifecycle_event !== "test"
+  );
+}
+
+function warmTuiGatewayClient(profile?: string): void {
+  if (isRemoteMode()) return;
+  if (!shouldUseTuiGatewayClient()) return;
+  void getTuiGatewayClient(profile)
+    .start()
+    .catch((error) => {
+      console.warn(
+        `[dashboard-gateway:${profileKey(profile)}] warmup failed:`,
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+}
+
+function stopTuiGatewayClient(profile?: string): void {
+  const key = profileKey(profile);
+  const client = tuiGatewayClients.get(key);
+  if (!client) return;
+  client.stop();
+  tuiGatewayClients.delete(key);
+}
+
+const CAPABILITIES_TIMEOUT_MS = 350;
+const CAPABILITIES_CACHE_MS = 60_000;
+
+const capabilitiesCache = new Map<
+  string,
+  { expiresAt: number; value: HermesApiCapabilities | null }
+>();
 
 // ────────────────────────────────────────────────────
 //  API Server health check
@@ -449,6 +1019,22 @@ export function contextFolderSystemMessage(
   };
 }
 
+function reasoningEffortForProfile(
+  profile?: string,
+): "minimal" | "low" | "medium" | "high" | "xhigh" | null {
+  const value = (getConfigValue("agent.reasoning_effort", profile) || "")
+    .trim()
+    .toLowerCase();
+
+  return value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+    ? value
+    : null;
+}
+
 function sendMessageViaApi(
   message: string,
   cb: ChatCallbacks,
@@ -484,12 +1070,15 @@ function sendMessageViaApi(
   const ctxSystem = contextFolderSystemMessage(contextFolder);
   if (ctxSystem) messages.unshift(ctxSystem);
 
-  const body = JSON.stringify({
+  const reasoningEffort = reasoningEffortForProfile(profile);
+  const bodyObj: Record<string, unknown> = {
     model: mc.model || "hermes-agent",
     messages,
     stream: true,
     ...(_resumeSessionId ? { session_id: _resumeSessionId } : {}),
-  });
+  };
+  if (reasoningEffort) bodyObj.reasoning_effort = reasoningEffort;
+  const body = JSON.stringify(bodyObj);
 
   // Encode the body up-front into a Buffer so we can:
   //  1. Set `Content-Length` accurately based on byte length (NOT char
@@ -504,25 +1093,7 @@ function sendMessageViaApi(
   //     client_max_size overflow path. See #405.
   const bodyBuf = Buffer.from(body, "utf-8");
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "Content-Length": String(bodyBuf.length),
-    ...getRemoteAuthHeader(),
-  };
-  // Local API server key (API_SERVER_KEY in the profile's .env /
-  // config.yaml) only applies in local mode — in remote/SSH mode the
-  // remote endpoint's own auth header (set above) is authoritative and
-  // must not be overwritten.
-  if (!isRemoteMode()) {
-    const apiServerKey = getApiServerKey(profile);
-    console.log(
-      "[hermes] apiServerKey=",
-      apiServerKey ? apiServerKey.slice(0, 12) + "…" : "(none)",
-    );
-    if (apiServerKey) {
-      headers.Authorization = `Bearer ${apiServerKey}`;
-    }
-  }
+  const headers = getJsonApiHeaders(profile, bodyBuf);
 
   // Session id: always send via `X-Hermes-Session-Id` so the gateway
   // doesn't fall back to its `_derive_chat_session_id` fingerprint —
@@ -578,11 +1149,13 @@ function sendMessageViaApi(
 
   function probeRealError(): void {
     // When streaming returns empty, make a non-streaming request to surface the real error
-    const probeBody = JSON.stringify({
+    const probeBodyObj: Record<string, unknown> = {
       model: mc.model || "hermes-agent",
       messages: [{ role: "user", content: userContent }],
       stream: false,
-    });
+    };
+    if (reasoningEffort) probeBodyObj.reasoning_effort = reasoningEffort;
+    const probeBody = JSON.stringify(probeBodyObj);
     const probeBodyBuf = Buffer.from(probeBody, "utf-8");
     // Per-request Content-Length (the outer `headers` object's value
     // belongs to the streaming request — reusing it here would lie about
@@ -823,6 +1396,535 @@ function sendMessageViaApi(
   };
 }
 
+function apiHistory(
+  history?: Array<{ role: string; content: string }>,
+): Array<{ role: string; content: string }> {
+  if (!history || history.length === 0) return [];
+  return history.map((msg) => ({
+    role:
+      msg.role === "agent"
+        ? "assistant"
+        : msg.role === "assistant"
+          ? "assistant"
+          : "user",
+    content: msg.content,
+  }));
+}
+
+function postRunStop(
+  apiUrl: string,
+  profile: string | undefined,
+  runId: string,
+): void {
+  const url = `${apiUrl}/v1/runs/${encodeURIComponent(runId)}/stop`;
+  const requester = url.startsWith("https") ? https : http;
+  const req = requester.request(url, {
+    method: "POST",
+    headers: getApiAuthHeaders(profile),
+    timeout: 3000,
+  });
+  req.on("error", () => undefined);
+  req.on("timeout", () => req.destroy());
+  req.end();
+}
+
+function sendMessageViaRuns(
+  message: string,
+  cb: ChatCallbacks,
+  profile?: string,
+  resumeSessionId?: string,
+  history?: Array<{ role: string; content: string }>,
+  contextFolder?: string,
+): ChatHandle {
+  const mc = getModelConfig(profile);
+  const controller = new AbortController();
+  const apiUrl = getApiUrl(profile);
+  const sessionId =
+    resumeSessionId ||
+    (getApiAuthHeaders(profile).Authorization
+      ? `desk-${Date.now()}-${randomUUID()}`
+      : "");
+  const ctxSystem = contextFolderSystemMessage(contextFolder);
+  const bodyObj: Record<string, unknown> = {
+    model: mc.model || "hermes-agent",
+    input: message,
+    conversation_history: apiHistory(history),
+  };
+  const reasoningEffort = reasoningEffortForProfile(profile);
+  if (reasoningEffort) bodyObj.reasoning_effort = reasoningEffort;
+  if (sessionId) bodyObj.session_id = sessionId;
+  if (ctxSystem) bodyObj.instructions = ctxSystem.content;
+  const bodyBuf = Buffer.from(JSON.stringify(bodyObj), "utf-8");
+  const headers = getJsonApiHeaders(profile, bodyBuf);
+  if (sessionId) {
+    headers["X-Hermes-Session-Id"] = sessionId;
+  }
+
+  let runId = "";
+  let hasContent = false;
+  let finished = false;
+  let fallbackStarted = false;
+  let startReq: http.ClientRequest | null = null;
+  let eventsReq: http.ClientRequest | null = null;
+  let fallbackHandle: ChatHandle | null = null;
+
+  function finish(error?: string): void {
+    if (finished || fallbackStarted) return;
+    finished = true;
+    if (error) {
+      cb.onError(error);
+    } else {
+      cb.onDone(sessionId || undefined);
+    }
+  }
+
+  function fallbackToChatCompletions(): void {
+    if (finished || fallbackStarted) return;
+    fallbackStarted = true;
+    fallbackHandle = sendMessageViaApi(
+      message,
+      cb,
+      profile,
+      resumeSessionId,
+      history,
+      undefined,
+      contextFolder,
+    );
+  }
+
+  function stopRunAndFallback(): void {
+    if (finished || fallbackStarted) return;
+    if (runId) postRunStop(apiUrl, profile, runId);
+    eventsReq?.destroy();
+    fallbackToChatCompletions();
+  }
+
+  function handleRunEvent(raw: Record<string, unknown>): void {
+    const eventName = typeof raw.event === "string" ? raw.event : "";
+    if (eventName === "message.delta") {
+      const delta = typeof raw.delta === "string" ? raw.delta : "";
+      if (delta) {
+        hasContent = true;
+        cb.onChunk(delta);
+      }
+      return;
+    }
+
+    const reasoning = runEventReasoningText(raw);
+    if (reasoning && cb.onReasoningChunk) {
+      cb.onReasoningChunk(reasoning);
+      return;
+    }
+
+    const toolEvent = chatToolEventFromRunEvent(raw);
+    if (toolEvent) {
+      if (cb.onToolEvent) {
+        cb.onToolEvent(toolEvent);
+      } else if (cb.onToolProgress) {
+        cb.onToolProgress(chatToolProgressLabel(toolEvent));
+      }
+      return;
+    }
+
+    if (eventName === "run.completed") {
+      const output = typeof raw.output === "string" ? raw.output : "";
+      if (output && !hasContent) {
+        hasContent = true;
+        cb.onChunk(output);
+      }
+      const usage = runCompletedUsage(raw);
+      if (usage && cb.onUsage) cb.onUsage(usage);
+      finish();
+      return;
+    }
+
+    if (eventName === "run.failed") {
+      const err =
+        typeof raw.error === "string" && raw.error
+          ? raw.error
+          : "Hermes run failed.";
+      if (!hasContent) {
+        fallbackToChatCompletions();
+        return;
+      }
+      finish(err);
+      return;
+    }
+
+    if (eventName === "run.cancelled") {
+      finish(hasContent ? undefined : "Hermes run was cancelled.");
+      return;
+    }
+
+    if (eventName === "approval.request") {
+      // The current renderer's approval controls are wired to the legacy chat
+      // flow and only appear after a response finishes. A run pauses before it
+      // can finish, so fall back to the existing path instead of deadlocking
+      // the user on a hidden approval request.
+      stopRunAndFallback();
+    }
+  }
+
+  function openEventStream(nextRunId: string): void {
+    const eventsUrl = `${apiUrl}/v1/runs/${encodeURIComponent(nextRunId)}/events`;
+    const requester = eventsUrl.startsWith("https") ? https : http;
+    eventsReq = requester.request(
+      eventsUrl,
+      {
+        method: "GET",
+        headers: getApiAuthHeaders(profile),
+        signal: controller.signal,
+        timeout: 120000,
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          stopRunAndFallback();
+          return;
+        }
+        let buffer = "";
+        res.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString();
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            const parsed = parseRunSseBlock(part);
+            if (!parsed || !parsed.data || parsed.data.startsWith(":")) {
+              continue;
+            }
+            try {
+              handleRunEvent(
+                JSON.parse(parsed.data) as Record<string, unknown>,
+              );
+            } catch {
+              /* malformed run event — skip */
+            }
+          }
+        });
+        res.on("end", () => {
+          if (buffer.trim()) {
+            const parsed = parseRunSseBlock(buffer);
+            if (parsed?.data) {
+              try {
+                handleRunEvent(
+                  JSON.parse(parsed.data) as Record<string, unknown>,
+                );
+              } catch {
+                /* malformed run event — skip */
+              }
+            }
+          }
+          if (!finished) finish();
+        });
+      },
+    );
+    eventsReq.on("error", (err) => {
+      if (err.name === "AbortError" || finished) return;
+      if (!hasContent) {
+        stopRunAndFallback();
+        return;
+      }
+      finish(`Run event stream failed: ${err.message}`);
+    });
+    eventsReq.on("timeout", () => {
+      eventsReq?.destroy();
+      if (!hasContent) {
+        stopRunAndFallback();
+        return;
+      }
+      finish("Run event stream timed out.");
+    });
+    eventsReq.end();
+  }
+
+  const startUrl = `${apiUrl}/v1/runs`;
+  const requester = startUrl.startsWith("https") ? https : http;
+  startReq = requester.request(
+    startUrl,
+    {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      timeout: 30000,
+    },
+    (res) => {
+      let raw = "";
+      res.on("data", (chunk) => {
+        raw += chunk.toString();
+      });
+      res.on("end", () => {
+        if (res.statusCode !== 202 && res.statusCode !== 200) {
+          fallbackToChatCompletions();
+          return;
+        }
+        try {
+          const parsed = JSON.parse(raw) as { run_id?: unknown };
+          runId = typeof parsed.run_id === "string" ? parsed.run_id : "";
+        } catch {
+          runId = "";
+        }
+        if (!runId) {
+          fallbackToChatCompletions();
+          return;
+        }
+        openEventStream(runId);
+      });
+    },
+  );
+  startReq.on("error", (err) => {
+    if (err.name === "AbortError" || finished) return;
+    fallbackToChatCompletions();
+  });
+  startReq.on("timeout", () => {
+    startReq?.destroy();
+    fallbackToChatCompletions();
+  });
+  startReq.write(bodyBuf);
+  startReq.end();
+
+  return {
+    abort: () => {
+      if (finished && !fallbackStarted) return;
+      controller.abort();
+      startReq?.destroy();
+      eventsReq?.destroy();
+      fallbackHandle?.abort();
+      if (runId) postRunStop(apiUrl, profile, runId);
+    },
+  };
+}
+
+async function sendMessageViaTuiGateway(
+  message: string,
+  cb: ChatCallbacks,
+  profile?: string,
+  resumeSessionId?: string,
+  history?: Array<{ role: string; content: string }>,
+  contextFolder?: string,
+): Promise<ChatHandle> {
+  const client = getTuiGatewayClient(profile);
+  let activeSessionId = "";
+  let storedSessionId = resumeSessionId || "";
+  let finished = false;
+  let hasGatewayOutput = false;
+  let hasSessionInfo = false;
+  let streamedText = "";
+  let fallbackAborted = false;
+  let fallbackHandle: ChatHandle | null = null;
+  let fallbackStarted = false;
+  let promptSubmitted = false;
+  let cleanup = (): void => undefined;
+
+  function finish(error?: string): void {
+    if (finished) return;
+    finished = true;
+    cleanup();
+    if (error) {
+      cb.onError(error);
+    } else {
+      cb.onDone(storedSessionId || undefined);
+    }
+  }
+
+  function cancel(): void {
+    if (finished) return;
+    finished = true;
+    cleanup();
+  }
+
+  function startApiFallback(reason: string): void {
+    if (finished || fallbackStarted) return;
+    fallbackStarted = true;
+    cleanup();
+    client.stop();
+    console.warn(
+      "[chat] Hermes gateway stream failed before output; falling back to API stream:",
+      reason,
+    );
+    void sendMessageViaNonGatewayApi(
+      message,
+      cb,
+      profile,
+      resumeSessionId,
+      history,
+      undefined,
+      contextFolder,
+    )
+      .then((handle) => {
+        fallbackHandle = handle;
+        if (fallbackAborted) handle.abort();
+      })
+      .catch((error) => {
+        finish(error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  cleanup = client.onEvent((event) => {
+    if (event.session_id && event.session_id !== activeSessionId) return;
+
+    const delta = gatewayMessageDelta(event);
+    if (delta) {
+      streamedText += delta;
+      hasGatewayOutput = true;
+      cb.onChunk(delta);
+      return;
+    }
+
+    const reasoning = gatewayReasoningText(event);
+    if (reasoning && cb.onReasoningChunk) {
+      hasGatewayOutput = true;
+      cb.onReasoningChunk(reasoning);
+      return;
+    }
+
+    const toolEvent = gatewayToolEvent(event);
+    if (toolEvent) {
+      hasGatewayOutput = true;
+      if (cb.onToolEvent) {
+        cb.onToolEvent(toolEvent);
+      } else if (cb.onToolProgress) {
+        cb.onToolProgress(chatToolProgressLabel(toolEvent));
+      }
+      return;
+    }
+
+    if (event.type === "message.complete") {
+      const finalText = gatewayMessageCompleteText(event);
+      const completionSuffix = gatewayCompletionSuffix(streamedText, finalText);
+      if (completionSuffix) {
+        streamedText += completionSuffix;
+        cb.onChunk(completionSuffix);
+      }
+      const usage = gatewayUsage(event);
+      if (usage && cb.onUsage) cb.onUsage(usage);
+      finish();
+      return;
+    }
+
+    if (event.type === "error") {
+      if (!promptSubmitted) return;
+      const error =
+        typeof event.payload?.message === "string"
+          ? event.payload.message
+          : "Hermes gateway stream reported an error.";
+      if (!hasGatewayOutput) {
+        startApiFallback(error);
+        return;
+      }
+      finish(error);
+      return;
+    }
+
+    if (event.type === "approval.request") {
+      // Match the existing local chat posture: Hermes One does not expose a
+      // mid-stream approval dialog, so answer the dashboard protocol once and
+      // keep the transcript focused on the resulting tool call/result events.
+      void client
+        .request(
+          "approval.respond",
+          {
+            session_id: activeSessionId,
+            choice: "once",
+            all: false,
+          },
+          30_000,
+        )
+        .catch((error) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          if (!hasGatewayOutput) {
+            startApiFallback(message);
+            return;
+          }
+          finish(message);
+        });
+      return;
+    }
+
+    if (
+      event.type === "clarify.request" ||
+      event.type === "sudo.request" ||
+      event.type === "secret.request"
+    ) {
+      void client
+        .request("session.interrupt", { session_id: activeSessionId }, 5_000)
+        .catch(() => undefined);
+      finish(
+        `Hermes requested ${event.type.replace(".request", "")} input, but Hermes One does not yet expose that gateway dialog.`,
+      );
+    }
+  });
+
+  try {
+    if (resumeSessionId) {
+      const resumed = await client.request<{
+        info?: unknown;
+        resumed?: string;
+        session_id?: string;
+      }>("session.resume", {
+        cols: 96,
+        session_id: resumeSessionId,
+      });
+      activeSessionId = String(resumed.session_id || "");
+      storedSessionId = String(resumed.resumed || resumeSessionId);
+      hasSessionInfo = !!resumed.info;
+    } else {
+      const created = await client.request<{
+        info?: unknown;
+        session_id?: string;
+        stored_session_id?: string;
+      }>("session.create", {
+        cols: 96,
+        ...(contextFolder ? { cwd: contextFolder } : {}),
+        ...(history?.length ? { messages: apiHistory(history) } : {}),
+      });
+      activeSessionId = String(created.session_id || "");
+      storedSessionId = String(created.stored_session_id || activeSessionId);
+      hasSessionInfo = !!created.info;
+    }
+
+    if (!activeSessionId) {
+      throw new Error("Hermes gateway did not return a session id");
+    }
+
+    if (!hasSessionInfo) {
+      await waitForGatewayEvent(
+        client,
+        (event) =>
+          event.type === "session.info" && event.session_id === activeSessionId,
+        120_000,
+      );
+    }
+
+    promptSubmitted = true;
+    await client.request("prompt.submit", {
+      session_id: activeSessionId,
+      text: message,
+    });
+  } catch (error) {
+    cleanup();
+    if (!promptSubmitted) {
+      client.stop();
+    }
+    throw error;
+  }
+
+  return {
+    abort: () => {
+      if (finished) return;
+      if (fallbackStarted) {
+        fallbackAborted = true;
+        fallbackHandle?.abort();
+        cancel();
+        return;
+      }
+      void client
+        .request("session.interrupt", { session_id: activeSessionId }, 5_000)
+        .catch(() => undefined);
+      cancel();
+    },
+  };
+}
+
 // ────────────────────────────────────────────────────
 //  CLI fallback (slow path — spawns process)
 // ────────────────────────────────────────────────────
@@ -888,6 +1990,7 @@ function sendMessageViaCli(
   const KNOWN_API_KEYS = [
     "OPENROUTER_API_KEY",
     "OPENAI_API_KEY",
+    "OLLAMA_API_KEY",
     "ANTHROPIC_API_KEY",
     "GROQ_API_KEY",
     "DEEPSEEK_API_KEY",
@@ -1119,7 +2222,10 @@ function sendMessageViaCli(
 
 let apiServerAvailable: boolean | null = null; // cached after first check
 
-function setApiCacheFor(profile: string | undefined, value: boolean | null): void {
+function setApiCacheFor(
+  profile: string | undefined,
+  value: boolean | null,
+): void {
   if (profileKey(profile) === profileKey(undefined)) {
     apiServerAvailable = value;
   }
@@ -1131,7 +2237,86 @@ function isLocalApiTransportError(error: string): boolean {
   );
 }
 
-async function sendMessageViaApiWithLocalRecovery(
+async function sendMessageViaNonGatewayApi(
+  message: string,
+  cb: ChatCallbacks,
+  profile?: string,
+  resumeSessionId?: string,
+  history?: Array<{ role: string; content: string }>,
+  attachments?: Attachment[],
+  contextFolder?: string,
+): Promise<ChatHandle> {
+  const approvalCommand = /^\/(?:approve|deny)\b/i.test(message.trim());
+  if (!attachments?.length && !approvalCommand) {
+    const capabilities = await getApiCapabilities(profile);
+    if (supportsHermesRunsTransport(capabilities)) {
+      return sendMessageViaRuns(
+        message,
+        cb,
+        profile,
+        resumeSessionId,
+        history,
+        contextFolder,
+      );
+    }
+  }
+
+  return sendMessageViaApi(
+    message,
+    cb,
+    profile,
+    resumeSessionId,
+    history,
+    attachments,
+    contextFolder,
+  );
+}
+
+async function sendMessageViaBestApi(
+  message: string,
+  cb: ChatCallbacks,
+  profile?: string,
+  resumeSessionId?: string,
+  history?: Array<{ role: string; content: string }>,
+  attachments?: Attachment[],
+  contextFolder?: string,
+): Promise<ChatHandle> {
+  const approvalCommand = /^\/(?:approve|deny)\b/i.test(message.trim());
+  if (
+    shouldUseTuiGatewayClient() &&
+    !isRemoteMode() &&
+    !attachments?.length &&
+    !approvalCommand
+  ) {
+    try {
+      return await sendMessageViaTuiGateway(
+        message,
+        cb,
+        profile,
+        resumeSessionId,
+        history,
+        contextFolder,
+      );
+    } catch (error) {
+      console.warn(
+        "[chat] Hermes gateway stream unavailable; falling back to API stream:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  return sendMessageViaNonGatewayApi(
+    message,
+    cb,
+    profile,
+    resumeSessionId,
+    history,
+    attachments,
+    contextFolder,
+  );
+}
+
+async function sendMessageViaBestApiWithLocalRecovery(
   message: string,
   cb: ChatCallbacks,
   profile?: string,
@@ -1175,7 +2360,7 @@ async function sendMessageViaApiWithLocalRecovery(
 
     if (recovered) {
       setApiCacheFor(profile, true);
-      activeHandle = await sendMessageViaApi(
+      activeHandle = await sendMessageViaBestApi(
         message,
         cb,
         profile,
@@ -1235,6 +2420,12 @@ async function sendMessageViaApiWithLocalRecovery(
           cb.onToolProgress?.(tool);
         }
       : undefined,
+    onToolEvent: cb.onToolEvent
+      ? (event) => {
+          sawOutput = true;
+          cb.onToolEvent?.(event);
+        }
+      : undefined,
     onUsage: cb.onUsage,
     onDone: (sessionId) => {
       settled = true;
@@ -1255,7 +2446,7 @@ async function sendMessageViaApiWithLocalRecovery(
     },
   };
 
-  activeHandle = await sendMessageViaApi(
+  activeHandle = await sendMessageViaBestApi(
     message,
     callbacks,
     profile,
@@ -1281,7 +2472,7 @@ export async function sendMessage(
 
   // Remote mode: always use API, no CLI fallback
   if (isRemoteMode()) {
-    return sendMessageViaApi(
+    return sendMessageViaBestApi(
       message,
       cb,
       profile,
@@ -1304,7 +2495,7 @@ export async function sendMessage(
   }
 
   if (apiServerAvailable) {
-    return sendMessageViaApiWithLocalRecovery(
+    return sendMessageViaBestApiWithLocalRecovery(
       message,
       cb,
       profile,
@@ -1330,6 +2521,7 @@ function ensureInitialized(): void {
   // (each profile needs its own port), so ensureInitialized only owns the
   // shared health poller.
   startHealthPolling();
+  warmTuiGatewayClient();
 }
 
 function startHealthPolling(): void {
@@ -1603,6 +2795,7 @@ export function startGatewayDetailed(profile?: string): GatewayStartResult {
   proc.unref();
   gatewayProcesses.set(key, proc);
   appStartedProfiles.add(key);
+  warmTuiGatewayClient(profile);
 
   // Wait a bit then check if API server came up (only meaningful for the
   // active profile, whose URL getApiUrl() resolves to).
@@ -1699,6 +2892,7 @@ export function stopGateway(
   }
   appStartedProfiles.delete(key);
   invalidateApiCacheFor(profile);
+  stopTuiGatewayClient(profile);
 }
 
 // Python image prefixes covering both native Windows (pythonw.exe / python.exe)
@@ -1998,18 +3192,8 @@ export function restartGatewayViaCli(
   }
 
   const queued = gatewayRestartQueueTail.then(
-    () =>
-      restartGatewayViaCliOnce(
-        profile,
-        healthTimeoutMs,
-        healthPollMs,
-      ),
-    () =>
-      restartGatewayViaCliOnce(
-        profile,
-        healthTimeoutMs,
-        healthPollMs,
-      ),
+    () => restartGatewayViaCliOnce(profile, healthTimeoutMs, healthPollMs),
+    () => restartGatewayViaCliOnce(profile, healthTimeoutMs, healthPollMs),
   );
 
   const promise = queued.finally(() => {
@@ -2113,7 +3297,10 @@ async function restartGatewayViaCliOnce(
       };
 
       proc.on("error", (err) => {
-        console.error(`[gateway:${key}] Failed to restart gateway:`, err.message);
+        console.error(
+          `[gateway:${key}] Failed to restart gateway:`,
+          err.message,
+        );
         finish(false);
       });
 
@@ -2185,4 +3372,5 @@ async function restartGatewayViaCliOnce(
  */
 export function notifyProfileSwitched(): void {
   apiServerAvailable = null;
+  warmTuiGatewayClient();
 }

@@ -42,6 +42,10 @@ function Gateway({ profile }: { profile?: string }): React.JSX.Element {
   const [busyPlatform, setBusyPlatform] = useState<string | null>(null);
   const [messages, setMessages] = useState<PlatformMessage>({});
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [apiKeyStatus, setApiKeyStatus] = useState<{ hasKey: boolean } | null>(
+    null,
+  );
+  const [generatingKey, setGeneratingKey] = useState(false);
   const gatewayStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -78,6 +82,21 @@ function Gateway({ profile }: { profile?: string }): React.JSX.Element {
     }, 10000);
     return () => clearInterval(interval);
   }, [loadConfig]);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.hermesAPI
+      .getApiServerKeyStatus(profile)
+      .then((status) => {
+        if (!cancelled) setApiKeyStatus(status);
+      })
+      .catch(() => {
+        // fail silently
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile]);
 
   const platforms = catalog?.platforms ?? [];
   const filteredPlatforms = useMemo(() => {
@@ -386,6 +405,67 @@ function Gateway({ profile }: { profile?: string }): React.JSX.Element {
         )}
         {loadError && <div className="gateway-inline-warning">{loadError}</div>}
       </div>
+
+      {apiKeyStatus && (
+        <div className="settings-section gateway-api-key-section">
+          <div className="settings-field">
+            <label className="settings-field-label">
+              {t("gateway.apiServerKey.title")}
+            </label>
+            <div className="settings-gateway-row">
+              {apiKeyStatus.hasKey ? (
+                <span
+                  className="settings-gateway-status running"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <CheckCircle2 size={14} />
+                  {t("gateway.apiServerKey.configured")}
+                </span>
+              ) : (
+                <span
+                  className="settings-gateway-status stopped"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <AlertTriangle size={14} />
+                  {t("gateway.apiServerKey.missing")}
+                </span>
+              )}
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={async () => {
+                  setGeneratingKey(true);
+                  try {
+                    await window.hermesAPI.generateApiServerKey(profile);
+                    const status =
+                      await window.hermesAPI.getApiServerKeyStatus(profile);
+                    setApiKeyStatus(status);
+                  } catch {
+                    // fail silently
+                  } finally {
+                    setGeneratingKey(false);
+                  }
+                }}
+                disabled={generatingKey}
+              >
+                {generatingKey
+                  ? t("gateway.apiServerKey.regenerating")
+                  : t("gateway.apiServerKey.generate")}
+              </button>
+            </div>
+            <div className="settings-field-hint">
+              {t("gateway.apiServerKey.generateHint")}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="gateway-toolbar">
         <div className="gateway-search">

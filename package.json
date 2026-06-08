@@ -1,7 +1,7 @@
 {
   "name": "hermes-desktop",
-  "version": "0.5.4",
-  "description": "Hermes One Desktop — self-improving AI assistant",
+  "version": "0.5.8",
+  "description": "Hermes Agent Desktop — self-improving AI assistant",
   "main": "./out/main/index.js",
   "author": "fathah",
   "homepage": "https://github.com/fathah/hermes-desktop",
@@ -27,6 +27,8 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
     "@types/highlight.js": "^9.12.4",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@wesbos/code-icons": "^1.2.4",
@@ -37,11 +39,15 @@
     "lucide-react": "^1.7.0",
     "posthog-js": "^1.376.0",
     "react-file-icon": "^1.6.0",
+    "react-hot-toast": "^2.6.0",
     "react-i18next": "^15.7.3",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.1",
     "remark-gfm": "^4.0.1",
-    "vscode-material-icons": "^0.1.1"
+    "three": "^0.183.2",
+    "troika-three-text": "^0.52.4",
+    "vscode-material-icons": "^0.1.1",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
@@ -55,6 +61,7 @@
     "@types/node": "^22.19.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.183.1",
     "@vitejs/plugin-react": "^5.1.1",
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
