@@ -3,7 +3,7 @@
 <br/>
 <p align="center">
   <a href="https://hermes-agent.nousresearch.com/docs/"><img src="https://img.shields.io/badge/Documentación-hermes--agent.nousresearch.com-FFD700?style=for-the-badge" alt="Documentación"></a>
-  <a href="https://t.me/hermes_agent_desktop"><img src="https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram"></a>
+  <a href="https://discord.gg/Fqu72h8z"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://github.com/fathah/hermes-desktop/blob/main/LICENSE"><img src="https://img.shields.io/badge/Licencia-MIT-green?style=for-the-badge" alt="Licencia: MIT"></a>
   <a href="https://hermesagents.cc/"><img src="https://img.shields.io/badge/Descargar-Releases-FF6600?style=for-the-badge" alt="Releases"></a>
   <a href="https://github.com/fathah/hermes-desktop/stargazers">
@@ -12,20 +12,31 @@
   <a href="https://github.com/fathah/hermes-desktop/releases/">
   <img src="https://img.shields.io/github/downloads/fathah/hermes-desktop/total?style=for-the-badge&color=00B496&label=Descargas%20Totales" alt="Descargas">
 </a>
+   <a href="https://bankr.bot/launches/0xfda75f77a22b4f4b783bbbb21915ef64d149bba3">
+  <img src="https://img.shields.io/badge/Token-$HD-purple?style=for-the-badge" alt="Token">
+</a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="README.ja-JP.md">日本語</a> ·
+  <a href="README.es-LATAM.md">Español (LATAM)</a>
 </p>
 
 > **Este proyecto está en desarrollo activo.** Las funciones pueden cambiar y algunas cosas podrían no funcionar perfectamente. Si encuentras un problema o tienes una idea, [abre un issue](https://github.com/fathah/hermes-desktop/issues). ¡Las contribuciones son bienvenidas!
 
-## Idiomas
-
-- English: `README.md`
-- 简体中文: `README.zh-CN.md`
-- 日本語: `README.ja-JP.md`
-- 🌎 Español (LATAM): `README.es-LATAM.md`
-
 Hermes Desktop es una aplicación nativa de escritorio para instalar, configurar y chatear con [Hermes Agent](https://github.com/NousResearch/hermes-agent) — un asistente de IA con autoaprendizaje, uso de herramientas, mensajería multiplataforma y un ciclo de aprendizaje cerrado.
 
 En lugar de manejar el CLI a mano, la app guía todo el proceso de instalación, configuración de proveedores y uso diario en un solo lugar. Usa el script oficial de instalación de Hermes, guarda los archivos en `~/.hermes` y te da una GUI para chat, sesiones, perfiles, memoria, habilidades, herramientas, tareas programadas, gateways de mensajería y más.
+
+## Patrocinadores
+
+<a href="https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=hermes-desktop" target="_blank" rel="noopener noreferrer">
+    <img src="src/renderer/src/assets/logos/atlascloud.svg" alt="Atlas Cloud" height="100" style="display: block;">
+  </a>
+
+  > **[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=hermes-desktop)** es una plataforma de inferencia IA multimodal compatible con OpenAI (DeepSeek, Qwen, GLM, Kimi, MiniMax y más). Úsala en Hermes Desktop seleccionando **Atlas Cloud** como proveedor — la URL base se configura automáticamente.
 
 ## Instalación
 
@@ -137,6 +148,12 @@ En modo local, las solicitudes de chat van por `http://127.0.0.1:8642` con strea
 
 ## Proveedores soportados
 
+### Patrocinadores
+
+| Proveedor       | Notas                                                                                                                                                                                    |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Atlas Cloud** | Gateway compatible con OpenAI — DeepSeek, Qwen, GLM, Kimi, MiniMax y más ([atlascloud.ai](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=hermes-desktop)) |
+
 ### Proveedores de LLM
 
 | Proveedor           | Notas                                          |
@@ -240,6 +257,40 @@ Los archivos de Hermes se gestionan en:
 - `~/.hermes/profiles/` — directorios de perfiles con nombre
 - `~/.hermes/state.db` — base de datos del historial de sesiones
 - `~/.hermes/cron/jobs.json` — tareas programadas
+
+## Proveedor de secretos
+
+Por defecto, las claves API se guardan en `~/.hermes/.env` (el proveedor **env**). No se necesita ninguna configuración — este es el comportamiento histórico y nada cambia para ti.
+
+Si prefieres no guardar las claves en un `.env` en texto plano, el proveedor **command** (opcional) las resuelve ejecutando un comando auxiliar que tú configuras. El orden de resolución es: `process.env` → `.env` → proveedor → no definida.
+
+Helper por clave (el nombre de la clave solicitada llega como `$HERMES_SECRET_KEY`):
+
+```yaml
+secrets:
+  provider: command
+  command: "secret-tool lookup hermes $HERMES_SECRET_KEY"
+```
+
+Helper en modo lista (devuelve todas las claves en formato dotenv):
+
+```yaml
+secrets:
+  provider: command
+  command: "cat ~/.config/hermes/secrets.env"
+  mode: list
+```
+
+Ejemplos compatibles:
+- **GNOME Keyring:** `secret-tool lookup hermes $HERMES_SECRET_KEY`
+- **macOS Keychain:** `security find-generic-password -s hermes -a $HERMES_SECRET_KEY -w`
+- **Bitwarden CLI:** `bw get item "$HERMES_SECRET_KEY" | jq -r .notes` (tras `bw unlock`)
+- **1Password CLI:** `op read "op://vault/$HERMES_SECRET_KEY/credential"`
+- **Archivo env simple con permisos de usuario:** `command: "cat ~/.config/hermes/secrets.env"` con `chmod 600`
+
+Cualquier helper que imprima un valor por clave o un bloque dotenv en stdout funcionará. Hermes impone un timeout de 3 segundos y un límite de 1 MiB de salida.
+
+Fuente de verdad: [`src/main/secrets/`](src/main/secrets/).
 
 ## Stack tecnológico
 
