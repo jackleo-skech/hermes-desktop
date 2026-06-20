@@ -619,6 +619,7 @@ function Layout({
           activeRunId={activeRunId}
           onSelect={handleActivateRun}
           onClose={handleCloseRun}
+          onNew={handleNewChat}
           getAppearance={getAppearance}
         />
         {verifyWarning && onReinstall && onDismissVerifyWarning && (

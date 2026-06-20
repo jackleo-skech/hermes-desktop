@@ -75,6 +75,8 @@ export default {
   discoveryError:
     "Couldn't reach the provider's model list — you can still type a model name",
   customBaseUrlHint: "OpenAI-compatible API endpoint",
+  compatApiKeyHint:
+    "Stored as {{envVar}} — required for remote endpoints, optional for localhost.",
   poolHint:
     "Add multiple API Keys for the same provider for automatic rotation and load balancing. Hermes will cycle through them.",
   add: "Add",

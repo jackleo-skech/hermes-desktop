@@ -44,6 +44,7 @@ import lmstudioLogo from "../../assets/logos/lmstudio.svg";
 import vllmLogo from "../../assets/logos/vllm.svg";
 import atlascloudLogo from "../../assets/logos/atlascloud.svg";
 import atomicchatLogo from "../../assets/logos/atomicchat.svg";
+import qwenLogo from "../../assets/logos/qwen.svg";
 
 type BrandKey =
   | "claude"
@@ -66,6 +67,7 @@ type BrandKey =
   | "vllm"
   | "atlascloud"
   | "atomicchat"
+  | "qwen"
   | "huggingface"
   | "mistral"
   | "opencode"
@@ -114,6 +116,7 @@ const LOGOS: Record<Exclude<BrandKey, "unknown">, string> = {
   vllm: vllmLogo,
   atlascloud: atlascloudLogo,
   atomicchat: atomicchatLogo,
+  qwen: qwenLogo,
   huggingface: huggingfaceLogo,
   mistral: mistralLogo,
   opencode: opencodeLogo,
@@ -160,6 +163,7 @@ function detectBrand(provider?: string, modelId?: string): BrandKey {
   if (/(xiaomi|mimo)/.test(haystack)) return "xiaomi";
   if (/(atlascloud|atlas[\s-]?cloud)/.test(haystack)) return "atlascloud";
   if (/(atomicchat|atomic[\s-]?chat)/.test(haystack)) return "atomicchat";
+  if (/(qwen|qwq|dashscope|alibaba|tongyi)/.test(haystack)) return "qwen";
   if (/(lmstudio|lm[\s-]?studio)/.test(haystack)) return "lmstudio";
   if (/vllm/.test(haystack)) return "vllm";
   if (/aiml/.test(haystack)) return "api_server";

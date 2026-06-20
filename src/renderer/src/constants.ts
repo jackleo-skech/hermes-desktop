@@ -282,6 +282,64 @@ export interface LocalPreset {
   envKey?: string;
 }
 
+// Card grid for the Providers tab's model-provider picker (a friendlier
+// replacement for the long <select>). Every native provider is a card; the
+// terminal `local` card reveals the LOCAL_PRESETS chips (local servers + remote
+// OpenAI-compatible endpoints). `openai` is a card but routes as `custom` (see
+// OPENAI_COMPATIBLE_BASE_URLS). Distinct from PROVIDERS.setup, which stays the
+// curated first-run set.
+export const PROVIDER_CARDS: { id: string; name: string }[] = [
+  { id: "openrouter", name: "constants.openrouterName" },
+  { id: "anthropic", name: "constants.anthropicName" },
+  { id: "openai", name: "constants.openaiName" },
+  { id: "openai-codex", name: "constants.openaiCodexName" },
+  { id: "ollama-cloud", name: "constants.ollamaCloudName" },
+  { id: "google", name: "constants.googleName" },
+  { id: "xai", name: "constants.xaiName" },
+  { id: "xiaomi", name: "Xiaomi MiMo" },
+  { id: "deepseek", name: "DeepSeek" },
+  { id: "nvidia", name: "NVIDIA NIM" },
+  { id: "zai", name: "Z.ai / GLM" },
+  { id: "minimax", name: "MiniMax" },
+  { id: "huggingface", name: "Hugging Face" },
+  { id: "qwen", name: "Qwen" },
+  { id: "nous", name: "constants.nousName" },
+  // "Local / Others" — this chip covers both local servers and any remote
+  // OpenAI-compatible endpoint, so it isn't labelled just "Local".
+  { id: "local", name: "Local / Others" },
+];
+
+// Provider dropdown ids the bundled agent does NOT resolve natively — there is
+// no plugin in hermes-agent/plugins/model-providers/ and no alias in
+// resolve_provider (hermes_cli/auth.py), so passing the id raises
+// "Unknown provider". They are OpenAI-compatible endpoints, so we route them
+// through the `custom` provider with this base_url; the gateway then
+// host-derives the API key (runtime_provider._host_derived_api_key), e.g.
+// api.groq.com -> GROQ_API_KEY. Native providers (openrouter, anthropic, xai,
+// deepseek, gemini/google, xiaomi, nvidia, zai, minimax, huggingface, nous,
+// ollama-cloud, openai-codex, lmstudio, …) are intentionally absent: the
+// gateway hardcodes their base_url.
+// Every id offered as a LOCAL_PRESETS chip must appear here so the Providers
+// picker routes it consistently (autofill base_url + persist as `custom`).
+// Keep this in sync with LOCAL_PRESETS below.
+export const OPENAI_COMPATIBLE_BASE_URLS: Record<string, string> = {
+  openai: "https://api.openai.com/v1",
+  aimlapi: "https://api.aimlapi.com/v1",
+  mistral: "https://api.mistral.ai/v1",
+  groq: "https://api.groq.com/openai/v1",
+  deepseek: "https://api.deepseek.com/v1",
+  together: "https://api.together.xyz/v1",
+  fireworks: "https://api.fireworks.ai/inference/v1",
+  cerebras: "https://api.cerebras.ai/v1",
+  atlascloud: "https://api.atlascloud.ai/v1",
+  perplexity: "https://api.perplexity.ai",
+  lmstudio: "http://localhost:1234/v1",
+  atomicchat: "http://localhost:1337/v1",
+  ollama: "http://localhost:11434/v1",
+  vllm: "http://localhost:8000/v1",
+  llamacpp: "http://localhost:8080/v1",
+};
+
 export const LOCAL_PRESETS: LocalPreset[] = [
   {
     id: "lmstudio",

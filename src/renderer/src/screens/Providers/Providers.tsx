@@ -1,14 +1,42 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { SETTINGS_SECTIONS, PROVIDERS, OAUTH_PROVIDERS } from "../../constants";
+import {
+  SETTINGS_SECTIONS,
+  PROVIDERS,
+  OAUTH_PROVIDERS,
+  OPENAI_COMPATIBLE_BASE_URLS,
+  PROVIDER_CARDS,
+  LOCAL_PRESETS,
+} from "../../constants";
 import { useI18n } from "../../components/useI18n";
 import BrandLogo from "../../components/common/BrandLogo";
 import { useDiscoveredModels } from "../../hooks/useDiscoveredModels";
 import OAuthLoginModal from "../../components/OAuthLoginModal";
 import { KeyRound } from "../../assets/icons";
+import { expectedEnvKeyForUrl } from "../../../../shared/url-key-map";
 
 // Local mirror of the ambient `CredentialPoolEntry` from
 // src/preload/index.d.ts — the renderer's tsconfig sometimes doesn't
 // pick up the d.ts depending on where the file lives.
+// config.yaml stores OpenAI-compatible providers as `custom` + base_url (the
+// agent can't resolve their brand id). Map a loaded (provider, baseUrl) back to
+// the brand id so the dropdown re-selects it instead of showing "Custom".
+function displayProviderFromConfig(provider: string, baseUrl: string): string {
+  if (provider !== "custom" || !baseUrl) return provider;
+  const match = Object.entries(OPENAI_COMPATIBLE_BASE_URLS).find(
+    ([, url]) => url === baseUrl,
+  );
+  return match ? match[0] : provider;
+}
+
+// The env var an OpenAI-compatible endpoint's key is stored under — an exact
+// preset match wins (e.g. AtlasCloud -> ATLASCLOUD_API_KEY), else derived from
+// the URL host, matching the agent's runtime_provider host derivation.
+function resolveCompatEnvKey(baseUrl: string): string {
+  const preset = LOCAL_PRESETS.find((p) => p.baseUrl === baseUrl);
+  if (preset?.envKey) return preset.envKey;
+  return expectedEnvKeyForUrl(baseUrl);
+}
+
 interface CredentialPoolEntry {
   id?: string;
   label?: string;
@@ -42,6 +70,9 @@ function Providers({
   const [modelName, setModelName] = useState("");
   const [modelBaseUrl, setModelBaseUrl] = useState("");
   const [modelSaved, setModelSaved] = useState(false);
+  // Collapse the provider grid to a read-only summary once configured; the
+  // Change button re-opens it. Unconfigured (auto) always shows the grid.
+  const [editingProvider, setEditingProvider] = useState(false);
   const modelLoaded = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -82,7 +113,7 @@ function Providers({
       window.hermesAPI.getCredentialPool(),
     ]);
     setEnv(envData);
-    setModelProvider(mc.provider);
+    setModelProvider(displayProviderFromConfig(mc.provider, mc.baseUrl));
     setModelName(mc.model);
     setModelBaseUrl(mc.baseUrl);
     setCredPool(pool);
@@ -103,7 +134,7 @@ function Providers({
     (async (): Promise<void> => {
       const mc = await window.hermesAPI.getModelConfig(profile);
       modelLoaded.current = false;
-      setModelProvider(mc.provider);
+      setModelProvider(displayProviderFromConfig(mc.provider, mc.baseUrl));
       setModelName(mc.model);
       setModelBaseUrl(mc.baseUrl);
       requestAnimationFrame(() => {
@@ -116,8 +147,13 @@ function Providers({
   // typing in the Model field still feels responsive.
   const saveModelConfig = useCallback(async () => {
     if (!modelLoaded.current) return;
+    // OpenAI-compatible providers aren't known to the agent by id — persist
+    // them as `custom` + base_url so the gateway accepts the config and
+    // host-derives the API key.
+    const configProvider =
+      modelProvider in OPENAI_COMPATIBLE_BASE_URLS ? "custom" : modelProvider;
     await window.hermesAPI.setModelConfig(
-      modelProvider,
+      configProvider,
       modelName,
       modelBaseUrl,
       profile,
@@ -151,8 +187,10 @@ function Providers({
     if (modelLibTimer.current) clearTimeout(modelLibTimer.current);
     modelLibTimer.current = setTimeout(() => {
       const displayName = modelName.split("/").pop() || modelName;
+      const libProvider =
+        modelProvider in OPENAI_COMPATIBLE_BASE_URLS ? "custom" : modelProvider;
       window.hermesAPI
-        .addModel(displayName, modelProvider, modelName, modelBaseUrl)
+        .addModel(displayName, libProvider, modelName, modelBaseUrl)
         .catch(() => {
           /* non-fatal — library write is best-effort */
         });
@@ -252,7 +290,44 @@ function Providers({
     });
   }
 
+  // Select a provider from the card grid / preset chips / (legacy) dropdown.
+  // Native ids clear base_url (the gateway hardcodes it); OpenAI-compatible ids
+  // autofill their endpoint and persist as `custom` (see saveModelConfig); the
+  // `local`/`custom` sentinel seeds a localhost placeholder.
+  function selectProvider(id: string): void {
+    if (id === "custom" || id === "local") {
+      // The "local" card has no provider id of its own — it routes as custom.
+      setModelProvider("custom");
+      if (!modelBaseUrl) setModelBaseUrl("http://localhost:1234/v1");
+    } else if (id in OPENAI_COMPATIBLE_BASE_URLS) {
+      setModelProvider(id);
+      setModelBaseUrl(OPENAI_COMPATIBLE_BASE_URLS[id]);
+    } else {
+      setModelProvider(id);
+      setModelBaseUrl("");
+    }
+  }
+
   const isCustomProvider = modelProvider === "custom";
+  // OpenAI-compatible providers are routed as `custom` but keep their brand
+  // selected; they show the (autofilled) base_url field like custom does.
+  const isCompatibleProvider = modelProvider in OPENAI_COMPATIBLE_BASE_URLS;
+  const showBaseUrl = isCustomProvider || isCompatibleProvider;
+  // The terminal "Local" card is active whenever the current selection isn't
+  // one of the other grid cards — i.e. a custom URL or a local/remote preset
+  // reached through it. It owns the preset-chip sub-section.
+  const isLocalCard =
+    showBaseUrl &&
+    !PROVIDER_CARDS.some((c) => c.id !== "local" && c.id === modelProvider);
+  // "auto" means nothing specific is set yet — keep the grid open in that case.
+  const isConfigured = modelProvider !== "auto";
+  const showEditor = !isConfigured || editingProvider;
+  const summaryMeta = [modelName, showBaseUrl ? modelBaseUrl : ""]
+    .filter(Boolean)
+    .join("  ·  ");
+  // For compatible/custom endpoints, the API key is entered inline (right under
+  // Base URL) and stored under the host-derived env var the gateway reads.
+  const compatEnvKey = showBaseUrl ? resolveCompatEnvKey(modelBaseUrl) : "";
 
   // Live model discovery: fetch the provider's /v1/models list and feed
   // it into a datalist that powers the Model field's autocomplete.  Only
@@ -261,7 +336,7 @@ function Providers({
   const [discoveryRefresh, setDiscoveryRefresh] = useState(0);
   const discovery = useDiscoveredModels({
     provider: modelProvider,
-    baseUrl: isCustomProvider ? modelBaseUrl : undefined,
+    baseUrl: showBaseUrl ? modelBaseUrl : undefined,
     profile,
     enabled: !!visible && modelProvider !== "auto",
     refreshToken: discoveryRefresh,
@@ -276,121 +351,238 @@ function Providers({
       </p>
 
       <div className="settings-section">
-        <div className="settings-section-title">
-          {t("common.model")}
-          {modelSaved && (
-            <span className="settings-saved" style={{ marginLeft: 8 }}>
-              {t("common.saved")}
-            </span>
-          )}
-        </div>
-
-        <div className="settings-field">
-          <label className="settings-field-label">{t("common.provider")}</label>
-          <div className="settings-provider-row">
-            <BrandLogo provider={modelProvider} modelId={modelName} size={20} />
-            <select
-              className="input settings-select"
-              value={modelProvider}
-              onChange={(e) => {
-                const v = e.target.value;
-                setModelProvider(v);
-                if (v === "custom") {
-                  // Seed a local-LLM placeholder only when the field is empty
-                  // (don't clobber an existing custom URL the user has typed).
-                  if (!modelBaseUrl) {
-                    setModelBaseUrl("http://localhost:1234/v1");
-                  }
-                } else {
-                  // Switching to a named provider — its base_url is hardcoded
-                  // by the gateway, and a stale URL from a prior provider
-                  // would either be ignored (best case) or misroute (worst).
-                  setModelBaseUrl("");
-                }
-              }}
+        <div className="settings-section-title settings-section-title-row">
+          <span>
+            {t("common.model")}
+            {modelSaved && (
+              <span className="settings-saved" style={{ marginLeft: 8 }}>
+                {t("common.saved")}
+              </span>
+            )}
+          </span>
+          {isConfigured && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setEditingProvider((v) => !v)}
             >
-              {PROVIDERS.options.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {t(opt.label)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="settings-field-hint">
-            {isCustomProvider
-              ? t("settings.customProviderHint")
-              : t("settings.providerHint")}
-          </div>
-        </div>
-
-        <div className="settings-field">
-          <label className="settings-field-label">{t("common.model")}</label>
-          <div className="settings-model-row">
-            <input
-              className="input"
-              type="text"
-              value={modelName}
-              onChange={(e) => setModelName(e.target.value)}
-              placeholder={t("settings.modelNamePlaceholder")}
-              list={discovery.models.length > 0 ? discoveryListId : undefined}
-              autoComplete="off"
-            />
-            {discovery.status !== "unsupported" &&
-              discovery.status !== "idle" && (
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setDiscoveryRefresh((n) => n + 1)}
-                  disabled={discovery.status === "loading"}
-                  title={t("settings.refreshModels")}
-                >
-                  ↻
-                </button>
-              )}
-          </div>
-          {discovery.models.length > 0 && (
-            <datalist id={discoveryListId}>
-              {discovery.models.map((m) => {
-                const isFree = discovery.freeModels?.includes(m);
-                return (
-                  <option
-                    key={m}
-                    value={m}
-                    label={isFree ? t("models.freeBadge") : undefined}
-                  />
-                );
-              })}
-            </datalist>
+              {showEditor ? t("common.done") : t("common.change")}
+            </button>
           )}
-          <div className="settings-field-hint">
-            {discovery.status === "loading"
-              ? t("settings.discoveringModels")
-              : discovery.status === "ok"
-                ? t("settings.discoveredCount", {
-                    count: discovery.models.length,
-                  })
-                : discovery.status === "no-key"
-                  ? t("settings.discoveryNoKey")
-                  : discovery.status === "error"
-                    ? t("settings.discoveryError")
-                    : t("settings.modelHint")}
-          </div>
         </div>
 
-        {isCustomProvider && (
-          <div className="settings-field">
-            <label className="settings-field-label">
-              {t("common.baseUrl")}
-            </label>
-            <input
-              className="input"
-              type="text"
-              value={modelBaseUrl}
-              onChange={(e) => setModelBaseUrl(e.target.value)}
-              placeholder={t("settings.modelBaseUrlPlaceholder")}
+        {showEditor ? (
+          <>
+            <div className="settings-field">
+              <label className="settings-field-label">
+                {t("common.provider")}
+              </label>
+              <div className="setup-local-presets providers-provider-chips">
+                {PROVIDER_CARDS.map((card) => {
+                  const active =
+                    card.id === "local"
+                      ? isLocalCard
+                      : modelProvider === card.id;
+                  return (
+                    <button
+                      key={card.id}
+                      type="button"
+                      aria-pressed={active}
+                      className={`setup-local-preset ${active ? "active" : ""}`}
+                      onClick={() => selectProvider(card.id)}
+                    >
+                      <BrandLogo
+                        provider={card.id}
+                        size={16}
+                        matchTheme={true}
+                      />
+                      <span>{t(card.name)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="settings-field-hint">
+                {isCustomProvider || isCompatibleProvider
+                  ? t("settings.customProviderHint")
+                  : t("settings.providerHint")}
+              </div>
+            </div>
+
+            {isLocalCard && (
+              <div className="settings-field">
+                <label className="settings-field-label">
+                  {t("setup.localGroupLabel")}
+                </label>
+                <div className="setup-local-presets">
+                  {LOCAL_PRESETS.filter((p) => p.group === "local").map(
+                    (preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className={`setup-local-preset ${modelBaseUrl === preset.baseUrl ? "active" : ""}`}
+                        onClick={() => selectProvider(preset.id)}
+                      >
+                        <BrandLogo
+                          provider={preset.id}
+                          size={16}
+                          matchTheme={true}
+                        />
+                        <span>{t(`setup.localPresets.${preset.id}`)}</span>
+                      </button>
+                    ),
+                  )}
+                </div>
+                <label
+                  className="settings-field-label"
+                  style={{ marginTop: 12 }}
+                >
+                  {t("setup.remoteGroupLabel")}
+                </label>
+                <div className="setup-local-presets">
+                  {LOCAL_PRESETS.filter((p) => p.group === "remote").map(
+                    (preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className={`setup-local-preset ${modelBaseUrl === preset.baseUrl ? "active" : ""}`}
+                        onClick={() => selectProvider(preset.id)}
+                      >
+                        <BrandLogo
+                          provider={preset.id}
+                          size={16}
+                          matchTheme={true}
+                        />
+                        <span>{t(`setup.localPresets.${preset.id}`)}</span>
+                      </button>
+                    ),
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="settings-field">
+              <label className="settings-field-label">
+                {t("common.model")}
+              </label>
+              <div className="settings-model-row">
+                <input
+                  className="input"
+                  type="text"
+                  value={modelName}
+                  onChange={(e) => setModelName(e.target.value)}
+                  placeholder={t("settings.modelNamePlaceholder")}
+                  list={
+                    discovery.models.length > 0 ? discoveryListId : undefined
+                  }
+                  autoComplete="off"
+                />
+                {discovery.status !== "unsupported" &&
+                  discovery.status !== "idle" && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setDiscoveryRefresh((n) => n + 1)}
+                      disabled={discovery.status === "loading"}
+                      title={t("settings.refreshModels")}
+                    >
+                      ↻
+                    </button>
+                  )}
+              </div>
+              {discovery.models.length > 0 && (
+                <datalist id={discoveryListId}>
+                  {discovery.models.map((m) => {
+                    const isFree = discovery.freeModels?.includes(m);
+                    return (
+                      <option
+                        key={m}
+                        value={m}
+                        label={isFree ? t("models.freeBadge") : undefined}
+                      />
+                    );
+                  })}
+                </datalist>
+              )}
+              <div className="settings-field-hint">
+                {discovery.status === "loading"
+                  ? t("settings.discoveringModels")
+                  : discovery.status === "ok"
+                    ? t("settings.discoveredCount", {
+                        count: discovery.models.length,
+                      })
+                    : discovery.status === "no-key"
+                      ? t("settings.discoveryNoKey")
+                      : discovery.status === "error"
+                        ? t("settings.discoveryError")
+                        : t("settings.modelHint")}
+              </div>
+            </div>
+
+            {showBaseUrl && (
+              <div className="settings-field">
+                <label className="settings-field-label">
+                  {t("common.baseUrl")}
+                </label>
+                <input
+                  className="input"
+                  type="text"
+                  value={modelBaseUrl}
+                  onChange={(e) => setModelBaseUrl(e.target.value)}
+                  placeholder={t("settings.modelBaseUrlPlaceholder")}
+                />
+                <div className="settings-field-hint">
+                  {t("settings.customBaseUrlHint")}
+                </div>
+              </div>
+            )}
+
+            {showBaseUrl && compatEnvKey && (
+              <div className="settings-field">
+                <label className="settings-field-label">
+                  {t("settings.apiKeyPlaceholder")}
+                  {savedKey === compatEnvKey && (
+                    <span className="settings-saved">{t("common.saved")}</span>
+                  )}
+                </label>
+                <div className="settings-input-row">
+                  <input
+                    className="input"
+                    type={visibleKeys.has(compatEnvKey) ? "text" : "password"}
+                    value={env[compatEnvKey] || ""}
+                    onChange={(e) => handleChange(compatEnvKey, e.target.value)}
+                    onBlur={() => handleBlur(compatEnvKey)}
+                    placeholder="sk-..."
+                  />
+                  <button
+                    className="btn-ghost settings-toggle-btn"
+                    onClick={() => toggleVisibility(compatEnvKey)}
+                  >
+                    {visibleKeys.has(compatEnvKey)
+                      ? t("common.hide")
+                      : t("common.show")}
+                  </button>
+                </div>
+                <div className="settings-field-hint">
+                  {t("settings.compatApiKeyHint", { envVar: compatEnvKey })}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="provider-summary">
+            <BrandLogo
+              provider={modelProvider}
+              modelId={modelName}
+              size={26}
+              matchTheme={true}
             />
-            <div className="settings-field-hint">
-              {t("settings.customBaseUrlHint")}
+            <div className="provider-summary-text">
+              <div className="provider-summary-name">
+                {t(PROVIDERS.labels[modelProvider] ?? modelProvider)}
+              </div>
+              {summaryMeta && (
+                <div className="provider-summary-meta">{summaryMeta}</div>
+              )}
             </div>
           </div>
         )}

@@ -5,6 +5,7 @@ import {
   GATEWAY_SECTIONS,
   SETTINGS_SECTIONS,
   LOCAL_PRESETS,
+  OPENAI_COMPATIBLE_BASE_URLS,
   THEME_OPTIONS,
 } from "../src/renderer/src/constants";
 
@@ -224,6 +225,15 @@ describe("LOCAL_PRESETS", () => {
     for (const preset of LOCAL_PRESETS.filter((p) => p.group === "local")) {
       expect(options.has(preset.id)).toBe(true);
       expect(PROVIDERS.labels[preset.id]).toBeTruthy();
+    }
+  });
+
+  // Every preset chip routes through OPENAI_COMPATIBLE_BASE_URLS in the
+  // Providers picker; a missing entry collapses the picker and mis-saves the
+  // provider (regression: AtlasCloud/LM Studio fell through to native routing).
+  it("maps every preset id to an OpenAI-compatible base URL", () => {
+    for (const preset of LOCAL_PRESETS) {
+      expect(OPENAI_COMPATIBLE_BASE_URLS[preset.id]).toBeTruthy();
     }
   });
 });

@@ -571,17 +571,20 @@ describe("CLI fallback session id propagation", () => {
 
     apiRequestErrors.push("STATUS:401:Authentication failed");
     healthStatuses.push(503, 200);
+    const startedSessions: string[] = [];
 
     await expect(
       new Promise<string | undefined>((resolve, reject) => {
         sendMessage("bad key", {
           onChunk: () => {},
           onDone: resolve,
+          onSessionStarted: (sessionId) => startedSessions.push(sessionId),
           onError: reject,
         }).catch(reject);
       }),
     ).rejects.toThrow("Authentication failed");
 
+    expect(startedSessions).toEqual([]);
     expect(apiRequests).toHaveLength(2);
     expect(JSON.parse(apiRequests[1].body)).toMatchObject({
       messages: [{ role: "user", content: "bad key" }],

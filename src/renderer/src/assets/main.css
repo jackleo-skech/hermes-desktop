@@ -1175,6 +1175,52 @@ body {
   width: 100%;
 }
 
+/* The Providers tab reuses the setup preset chips for its main provider
+   picker (flex-wrap, logo + name), consistent with the local/remote chips. */
+.providers-provider-chips {
+  margin-bottom: 10px;
+}
+
+/* Section title that carries a trailing action (e.g. the provider "Change"
+   button) on its right edge. */
+.settings-section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Read-only provider summary shown when a provider is configured and the grid
+   is collapsed. */
+.provider-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.provider-summary .brand-logo {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.provider-summary-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.provider-summary-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  word-break: break-all;
+}
+
 .setup-label {
   display: block;
   font-size: 13px;
@@ -1846,6 +1892,33 @@ body {
 .active-session-chip-close:hover {
   opacity: 1;
   background: var(--bg-elevated);
+}
+
+/* Browser-style new-tab button at the end of the strip. Sits above the drag
+   region so it stays clickable. */
+.active-session-new {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    color var(--transition);
+}
+.active-session-new:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
 }
 
 /* Sidebar footer with theme switcher */
@@ -5455,7 +5528,7 @@ body {
 .settings-header {
   font-size: 20px;
   font-weight: 700;
-  margin-bottom: 24px;
+  margin-bottom: 5px;
   color: var(--text-primary);
 }
 
