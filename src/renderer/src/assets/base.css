@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap');
 
 /* ========================================================================
    Base Reset & Typography
@@ -19,6 +20,7 @@ ul {
 body {
   font-family: var(
     --font-sans,
+    "Cairo",
     "Manrope",
     -apple-system,
     BlinkMacSystemFont,
