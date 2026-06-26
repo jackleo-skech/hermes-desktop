@@ -16,7 +16,7 @@ It contains no PII and never leaves the device except as the `anonymous_id` fiel
 
 Analytics is opt-out: enabled by default when the endpoint is configured, and the user can disable it from Settings. The choice is stored in `localStorage` under `hermes-analytics-enabled`.
 
-[[src/renderer/src/components/settings/PrivacyPane.tsx#PrivacyPane]] (the Privacy pane of the settings modal) renders the toggle and the data-collection disclosure, calling `setAnalyticsConsent`; the initial state comes from `getAnalyticsConsent` in [[src/renderer/src/components/settings/useSettingsData.ts#useSettingsData]]. When consent is off, `capture` short-circuits and no requests are made.
+[[src/renderer/src/components/settings/PrivacyPane.tsx#PrivacyPane]] (the Privacy pane of the settings modal) renders the toggle and a short one-line privacy note, calling `setAnalyticsConsent`; the initial state comes from `getAnalyticsConsent` in [[src/renderer/src/components/settings/useSettingsData.ts#useSettingsData]]. When consent is off, `capture` short-circuits and no requests are made.
 
 ## Capture surface
 

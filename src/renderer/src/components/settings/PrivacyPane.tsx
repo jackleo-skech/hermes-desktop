@@ -2,7 +2,7 @@ import { useI18n } from "../useI18n";
 import { setAnalyticsConsent } from "../../utils/analytics";
 import { useSettings } from "./SettingsDataContext";
 
-/** Anonymous usage analytics consent + disclosure. */
+/** Anonymous usage analytics consent. */
 export default function PrivacyPane(): React.JSX.Element {
   const { t } = useI18n();
   const { analyticsEnabled, setAnalyticsEnabled } = useSettings();
@@ -31,16 +31,6 @@ export default function PrivacyPane(): React.JSX.Element {
         <div className="settings-field-hint">
           {t("settings.analytics.hint")}
         </div>
-        <ul
-          className="settings-field-hint"
-          style={{ paddingLeft: "1.25em", marginTop: 4 }}
-        >
-          <li>{t("settings.analytics.disclosure.uuid")}</li>
-          <li>{t("settings.analytics.disclosure.platform")}</li>
-          <li>{t("settings.analytics.disclosure.navigation")}</li>
-          <li>{t("settings.analytics.disclosure.endpoint")}</li>
-          <li>{t("settings.analytics.disclosure.notCollected")}</li>
-        </ul>
       </div>
     </div>
   );

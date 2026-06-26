@@ -8632,6 +8632,33 @@ body {
   color: var(--text-tertiary, var(--text-secondary));
 }
 
+/* Icon + label centered inside a connection-mode option button. */
+.settings-mode-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+/* Subsection within a pane — a divider + icon'd label grouping related
+   fields (e.g. the Network block inside Connection). */
+.settings-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-subsection-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
 /* Log file selector tabs (Logs & Diagnostics). */
 .settings-log-tabs {
   display: flex;

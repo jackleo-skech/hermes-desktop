@@ -2,7 +2,6 @@ import { Coffee, ExternalLink, Globe } from "lucide-react";
 import { useI18n } from "../useI18n";
 import BrandLogo from "../common/BrandLogo";
 import xLogo from "../../assets/logos/twitter.svg";
-import { useSettings } from "./SettingsDataContext";
 import {
   DISCORD_COMMUNITY_URL,
   HERMES_TELEGRAM_URL,
@@ -11,21 +10,9 @@ import {
   KOFI_SUPPORT_URL,
 } from "./settingsHelpers";
 
-/** Community + support links and the OpenClaw → Hermes migration banner. */
+/** Community + support links. */
 export default function CommunityPane(): React.JSX.Element {
   const { t } = useI18n();
-  const {
-    openclawFound,
-    openclawPath,
-    migrationDismissed,
-    migrating,
-    migrationLog,
-    migrationResult,
-    migrationResultType,
-    migrationLogRef,
-    handleMigrate,
-    handleDismissMigration,
-  } = useSettings();
 
   const open = (url: string) => () => window.hermesAPI.openExternal(url);
 
@@ -127,62 +114,6 @@ export default function CommunityPane(): React.JSX.Element {
           </div>
         </div>
       </section>
-
-      {openclawFound && !migrationDismissed && (
-        <div className="settings-migration-banner">
-          <div className="settings-migration-header">
-            <div>
-              <div className="settings-migration-title">
-                {t("settings.migrationDetected")}
-              </div>
-              <div
-                className="settings-migration-desc"
-                dangerouslySetInnerHTML={{
-                  __html: t("settings.migrationDesc", {
-                    path: openclawPath || "",
-                  }),
-                }}
-              />
-            </div>
-            <button
-              className="btn-ghost settings-migration-dismiss"
-              onClick={handleDismissMigration}
-              title={t("settings.migrationDismiss")}
-            >
-              &times;
-            </button>
-          </div>
-          {migrationLog && (
-            <pre className="settings-hermes-doctor" ref={migrationLogRef}>
-              {migrationLog}
-            </pre>
-          )}
-          {migrationResult && (
-            <div
-              className={`settings-hermes-result ${migrationResultType || "error"}`}
-            >
-              {migrationResult}
-            </div>
-          )}
-          <div className="settings-migration-actions">
-            <button
-              className="btn btn-primary "
-              onClick={handleMigrate}
-              disabled={migrating}
-            >
-              {migrating
-                ? t("settings.migrating")
-                : t("settings.migrateToHermes")}
-            </button>
-            <button
-              className="btn btn-secondary "
-              onClick={handleDismissMigration}
-            >
-              {t("settings.skip")}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

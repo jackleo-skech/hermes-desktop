@@ -9,7 +9,7 @@ export default {
   nav: {
     groups: {
       general: "General",
-      hermes: "Hermes Agent",
+      hermes: "Hermes One",
     },
     appearance: "Appearance",
     language: "Language",
@@ -61,17 +61,7 @@ export default {
   },
   analytics: {
     label: "Send anonymous usage analytics",
-    hint: "Helps improve Hermes One by sending anonymous, aggregated usage data to the project's analytics service. You can turn this off at any time.",
-    disclosure: {
-      uuid: "A random per-install identifier stored only on this device (no name, email, or account info).",
-      platform: "Your operating system, Electron version, and Node.js version.",
-      navigation:
-        "Which screens you visit inside the app (e.g. Chat, Sessions, Settings). No chat content, prompts, model responses, or file contents are collected.",
-      endpoint:
-        "Data is sent to the Hermes analytics service (analytics.hermesone.org). Session recordings and pageview auto-capture are disabled.",
-      notCollected:
-        "Never collected: chat messages, file paths, API keys, model configuration, account credentials.",
-    },
+    hint: "Collected anonymously and used only to improve Hermes One — never your chats, files, prompts, or any personal data.",
   },
   notDetected: "Not detected",
   updatedSuccessfully: "Updated successfully!",
@@ -156,7 +146,7 @@ export default {
   serverConfigTitle: "Server Configuration",
   serverConfigHint:
     "You&apos;re connected to a remote Hermes server. Model selection, provider API keys, and credentials are managed on the server&apos;s <code>~/.hermes/.env</code> and <code>config.yaml</code>. Edit them on the host (e.g. <code>docker exec -it hermes vi /opt/data/.env</code>) and restart the container.",
-  connectionMode: "Mode",
+  connectionMode: "Connection Mode",
   switchedToLocal: "Switched to local mode",
 
   // Community

@@ -1,8 +1,13 @@
+import { Laptop, Server, Terminal, Wifi } from "lucide-react";
 import { useI18n } from "../useI18n";
 import { useSettings } from "./SettingsDataContext";
 import { CHAT_TRANSPORT_OPTIONS } from "./settingsHelpers";
 
-/** Local / Remote / SSH connection mode, chat transport, and server config. */
+/**
+ * Local / Remote / SSH connection mode, chat transport, server config, and the
+ * outgoing Network settings (Force IPv4 + proxy) — proxy/IPv4 shape every
+ * connection, so they live here as a subsection rather than a separate tab.
+ */
 export default function ConnectionPane(): React.JSX.Element {
   const { t } = useI18n();
   const s = useSettings();
@@ -42,6 +47,14 @@ export default function ConnectionPane(): React.JSX.Element {
     handleSwitchToLocal,
     handleSwitchToRemote,
     handleSwitchToSsh,
+    forceIpv4,
+    setForceIpv4,
+    httpProxy,
+    setHttpProxy,
+    httpProxyRef,
+    saveHttpProxy,
+    networkSaved,
+    setNetworkSaved,
   } = s;
 
   return (
@@ -60,19 +73,28 @@ export default function ConnectionPane(): React.JSX.Element {
               if (connLoaded.current) handleSwitchToLocal();
             }}
           >
-            {t("settings.modeLocal")}
+            <span className="settings-mode-option">
+              <Laptop size={15} />
+              {t("settings.modeLocal")}
+            </span>
           </button>
           <button
             className={`settings-theme-option ${connMode === "remote" ? "active" : ""}`}
             onClick={() => void handleSwitchToRemote()}
           >
-            {t("settings.modeRemote")}
+            <span className="settings-mode-option">
+              <Server size={15} />
+              {t("settings.modeRemote")}
+            </span>
           </button>
           <button
             className={`settings-theme-option ${connMode === "ssh" ? "active" : ""}`}
             onClick={() => void handleSwitchToSsh()}
           >
-            {t("settings.modeSsh")}
+            <span className="settings-mode-option">
+              <Terminal size={15} />
+              {t("settings.modeSsh")}
+            </span>
           </button>
         </div>
         <div className="settings-field-hint">
@@ -341,6 +363,74 @@ export default function ConnectionPane(): React.JSX.Element {
           />
         </div>
       )}
+
+      {/* Network — applies to every outgoing connection above. */}
+      <div className="settings-subsection">
+        <div className="settings-subsection-head">
+          <Wifi size={14} />
+          <span>{t("settings.networkSection")}</span>
+          {networkSaved && (
+            <span className="settings-saved">{t("settings.saved")}</span>
+          )}
+        </div>
+        <div className="settings-field">
+          <label className="settings-field-label">
+            {t("settings.forceIpv4")}
+            <label
+              className="tools-toggle"
+              style={{ marginLeft: 12, verticalAlign: "middle" }}
+            >
+              <input
+                type="checkbox"
+                checked={forceIpv4}
+                onChange={async (e) => {
+                  const val = e.target.checked;
+                  setForceIpv4(val);
+                  await window.hermesAPI.setConfig(
+                    "network.force_ipv4",
+                    val ? "true" : "false",
+                    profile,
+                  );
+                  setNetworkSaved(true);
+                  setTimeout(() => setNetworkSaved(false), 2000);
+                }}
+              />
+              <span className="tools-toggle-track" />
+            </label>
+          </label>
+          <div className="settings-field-hint">
+            {t("settings.forceIpv4Hint")}
+          </div>
+        </div>
+        <div className="settings-field">
+          <label className="settings-field-label">
+            {t("settings.httpProxy")}
+          </label>
+          <input
+            className="input"
+            type="text"
+            value={httpProxy}
+            onChange={(e) => {
+              httpProxyRef.current = e.target.value;
+              setHttpProxy(e.target.value);
+            }}
+            onBlur={() => {
+              void saveHttpProxy();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void saveHttpProxy();
+                e.currentTarget.blur();
+              }
+            }}
+            placeholder={t("settings.proxyPlaceholder")}
+          />
+          <div className="settings-field-hint">
+            {t("settings.httpProxyHint")}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

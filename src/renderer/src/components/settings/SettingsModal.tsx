@@ -8,7 +8,6 @@ import {
   Plug,
   ShieldCheck,
   Users,
-  Wifi,
   X,
 } from "lucide-react";
 import { useI18n } from "../useI18n";
@@ -19,7 +18,6 @@ import AppearancePane from "./AppearancePane";
 import LanguagePane from "./LanguagePane";
 import PrivacyPane from "./PrivacyPane";
 import ConnectionPane from "./ConnectionPane";
-import NetworkPane from "./NetworkPane";
 import DataPane from "./DataPane";
 import AboutPane from "./AboutPane";
 import CommunityPane from "./CommunityPane";
@@ -30,7 +28,6 @@ export type SettingsSection =
   | "language"
   | "privacy"
   | "connection"
-  | "network"
   | "data"
   | "about"
   | "community"
@@ -71,12 +68,6 @@ const SETTINGS_NAV: ReadonlyArray<{
   },
   {
     group: "general",
-    id: "network",
-    labelKey: "settings.nav.network",
-    Icon: Wifi,
-  },
-  {
-    group: "general",
     id: "data",
     labelKey: "settings.nav.data",
     Icon: Database,
@@ -105,6 +96,8 @@ const NAV_GROUP_ORDER: { id: NavGroup; labelKey: string }[] = [
 function resolveSection(name?: string): SettingsSection {
   const key = (name || "").trim().toLowerCase();
   if (key === "hermesagent") return "about";
+  // Network merged into Connection — keep the old `/settings network` working.
+  if (key === "network") return "connection";
   const match = SETTINGS_NAV.find((s) => s.id === key);
   return match ? match.id : "appearance";
 }
@@ -199,7 +192,6 @@ export default function SettingsModal({
             {section === "language" && <LanguagePane />}
             {section === "privacy" && <PrivacyPane />}
             {section === "connection" && <ConnectionPane />}
-            {section === "network" && <NetworkPane />}
             {section === "data" && <DataPane />}
             {section === "about" && <AboutPane />}
             {section === "community" && <CommunityPane />}
