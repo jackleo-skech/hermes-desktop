@@ -979,10 +979,16 @@ export function useDashboardChatTransport({
         const usage = usageFromPayload(event.payload);
         if (usage) {
           setUsage((prev) => {
+            // Estimate from messages, excluding the just-completed assistant
+            // reply (already appended to messagesRef.current at this point).
+            const lastAssistant = [...messagesRef.current]
+              .reverse()
+              .find((m) => m.role === "agent");
+            const estimate = estimateTokensFromMessages(messagesRef.current) -
+              Math.round((lastAssistant?.content?.length ?? 0) / 4);
             const ctx =
               usage.contextTokens ||
-              prev?.contextTokens ||
-              estimateTokensFromMessages(messagesRef.current);
+              Math.max(estimate, 0);
             return {
               promptTokens:
                 (prev?.promptTokens || 0) + (usage.promptTokens || 0),
