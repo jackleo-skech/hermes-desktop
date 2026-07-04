@@ -45,6 +45,13 @@ import {
 } from "../media";
 import { openTerminalInDirectory } from "../terminal-launcher";
 import {
+  getGpuStatus,
+  reenableGpuAndRelaunch,
+  setGpuPreference,
+  relaunchApp,
+} from "../gpu-fallback";
+import type { GpuPreferenceMode } from "../../shared/gpu";
+import {
   checkInstallStatus,
   verifyInstall,
   runInstall,
@@ -554,6 +561,18 @@ export function registerIpcHandlers(context: IpcContext): void {
     return true;
   });
   ipcMain.handle("quit-app", () => app.quit());
+
+  // GPU fallback visibility: lets the Office tab explain SwiftShader slowness
+  // and offer a one-click recovery instead of silently rendering 3D on the CPU.
+  ipcMain.handle("get-gpu-status", () => getGpuStatus());
+  ipcMain.handle("reenable-gpu", () => reenableGpuAndRelaunch());
+  // Settings → Appearance hardware-acceleration preference. Validated here
+  // because the renderer is untrusted for main-process file writes.
+  ipcMain.handle("set-gpu-preference", (_event, mode: GpuPreferenceMode) => {
+    if (mode !== "auto" && mode !== "on" && mode !== "off") return false;
+    return setGpuPreference(mode);
+  });
+  ipcMain.handle("relaunch-app", () => relaunchApp());
 
   // Hermes engine info
   ipcMain.handle("get-hermes-version", async () => {

@@ -8262,6 +8262,18 @@ body {
   border-radius: var(--radius-lg);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
   overflow: hidden;
+  /* Chrome UI, not content: drag-selecting highlights nav labels and field
+     captions, which looks broken. Copyable content opts back in below. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.settings-modal input,
+.settings-modal textarea,
+.settings-modal pre,
+.settings-modal code {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .settings-modal-header {
