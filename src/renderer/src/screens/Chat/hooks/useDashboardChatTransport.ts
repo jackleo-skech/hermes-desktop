@@ -180,12 +180,22 @@ export async function submitDashboardPromptWithRecovery(
     sessionId: string;
     storedSessionId?: string | null;
     text: string;
+    /** Scopes the turn to this profile on the UNIFIED machine dashboard. Without
+     *  it, prompt.submit runs in the dashboard's launch profile (default), so a
+     *  named profile's chat would answer as `default`. session create/resume
+     *  already pass it; prompt.submit must too. */
+    profile?: string;
   },
 ): Promise<string> {
+  const profileParam =
+    params.profile && params.profile !== "default"
+      ? { profile: params.profile }
+      : {};
   try {
     await client.request("prompt.submit", {
       session_id: params.sessionId,
       text: params.text,
+      ...profileParam,
     });
     return params.sessionId;
   } catch (err) {
@@ -195,6 +205,7 @@ export async function submitDashboardPromptWithRecovery(
 
     const resumed = await client.request<SessionResponse>("session.resume", {
       session_id: params.storedSessionId,
+      ...profileParam,
     });
     const recoveredSessionId = resumed?.session_id;
     if (!recoveredSessionId) {
@@ -205,6 +216,7 @@ export async function submitDashboardPromptWithRecovery(
     await client.request("prompt.submit", {
       session_id: recoveredSessionId,
       text: params.text,
+      ...profileParam,
     });
     return recoveredSessionId;
   }
@@ -1117,45 +1129,75 @@ export function useDashboardChatTransport({
 
       const generation = clientGenerationRef.current;
       const pending = (async () => {
-        const status = await window.hermesAPI.startDashboard(profile);
-        if (clientGenerationRef.current !== generation) {
-          throw new Error("Hermes dashboard connection was superseded");
-        }
-        if (!status.running || !status.connection?.wsUrl) {
-          // Sticky-fallback + notify only when we're actually going to fall back
-          // to legacy (auto mode). With an explicit "dashboard" preference
-          // (fallbackOnUnavailable=false) the turn errors instead, so latching or
-          // claiming "using basic chat" would be wrong. Local stays retryable —
-          // its dashboard may still be spawning.
-          if (
-            connectionMode !== "local" &&
-            fallbackOnUnavailable &&
-            !dashboardUnavailableRef.current
-          ) {
-            dashboardUnavailableRef.current = true;
-            onDashboardUnavailable?.(
+        // The dashboard `/api/ws` is the ONLY chat transport when a dashboard is
+        // available (matching apps/desktop, which has no /v1 chat path). A WS
+        // drop / "socket hang up" — e.g. a momentary SSH tunnel blip — is
+        // TRANSIENT and must reconnect, NOT fall back to the main-process /v1
+        // path: over the dashboard tunnel /v1 doesn't exist and 405s. So retry
+        // the connect (re-running startDashboard each attempt to re-establish the
+        // tunnel). Only a genuinely-absent dashboard (running=false) latches the
+        // negative flag and lets the caller drop to legacy gateway /v1.
+        let lastConnectErr: unknown = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const status = await window.hermesAPI.startDashboard(profile);
+          if (clientGenerationRef.current !== generation) {
+            throw new Error("Hermes dashboard connection was superseded");
+          }
+          if (!status.running || !status.connection?.wsUrl) {
+            // No dashboard on this remote (gateway-only install). Latch + notify
+            // only in auto mode where we actually fall back to legacy.
+            if (
+              connectionMode !== "local" &&
+              fallbackOnUnavailable &&
+              !dashboardUnavailableRef.current
+            ) {
+              dashboardUnavailableRef.current = true;
+              onDashboardUnavailable?.(
+                status.error || "Hermes dashboard transport is unavailable",
+              );
+            }
+            throw new Error(
               status.error || "Hermes dashboard transport is unavailable",
             );
           }
-          throw new Error(
-            status.error || "Hermes dashboard transport is unavailable",
-          );
-        }
-        const client: DashboardGatewayClient = new DashboardGatewayClient({
-          onEvent: handleGatewayEvent,
-          onClose: () => {
-            if (clientRef.current === client) {
-              clientRef.current = null;
+          const client: DashboardGatewayClient = new DashboardGatewayClient({
+            onEvent: handleGatewayEvent,
+            onClose: () => {
+              if (clientRef.current === client) {
+                clientRef.current = null;
+              }
+            },
+          });
+          try {
+            await client.connect(status.connection.wsUrl);
+          } catch (err) {
+            lastConnectErr = err;
+            client.close();
+            if (clientGenerationRef.current !== generation) {
+              throw new Error("Hermes dashboard connection was superseded");
             }
-          },
-        });
-        await client.connect(status.connection.wsUrl);
-        if (clientGenerationRef.current !== generation) {
-          client.close();
-          throw new Error("Hermes dashboard connection was superseded");
+            // Transient connect failure while the dashboard IS up — back off and
+            // retry (the tunnel may be re-establishing).
+            await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+            continue;
+          }
+          if (clientGenerationRef.current !== generation) {
+            client.close();
+            throw new Error("Hermes dashboard connection was superseded");
+          }
+          clientRef.current = client;
+          return client;
         }
-        clientRef.current = client;
-        return client;
+        // Dashboard was up but the WS wouldn't stay connected. Tag the error so
+        // the caller fails the turn (and lets the user retry) instead of POSTing
+        // /v1 to the dashboard tunnel (which 405s).
+        const err = new Error(
+          lastConnectErr instanceof Error
+            ? `Hermes dashboard chat connection failed: ${lastConnectErr.message}`
+            : "Hermes dashboard chat connection failed",
+        ) as Error & { dashboardWasReachable?: boolean };
+        err.dashboardWasReachable = true;
+        throw err;
       })();
       connectingRef.current = pending;
 
@@ -1483,6 +1525,15 @@ export function useDashboardChatTransport({
       try {
         client = await ensureClient();
       } catch (err) {
+        // Dashboard was reachable but the chat WS wouldn't connect: do NOT fall
+        // back to the /v1 path — over the dashboard tunnel /v1 doesn't exist and
+        // 405s. Surface the error so the user retries on the same transport.
+        if (
+          (err as { dashboardWasReachable?: boolean })?.dashboardWasReachable
+        ) {
+          const message = err instanceof Error ? err.message : String(err);
+          return failActiveTurn(message);
+        }
         if (fallbackOnUnavailable) {
           console.warn("Falling back to legacy chat transport.", err);
           return false;
@@ -1546,6 +1597,7 @@ export function useDashboardChatTransport({
           sessionId: selectedSessionId,
           storedSessionId: storedSessionIdRef.current,
           text: submitText,
+          profile,
           onRecoveredSessionId: (recoveredSessionId) => {
             runtimeSessionIdRef.current = recoveredSessionId;
           },
@@ -1570,6 +1622,7 @@ export function useDashboardChatTransport({
       setIsLoading,
       setMessages,
       setToolProgress,
+      profile,
     ],
   );
 
@@ -1622,7 +1675,11 @@ export function useDashboardChatTransport({
         const sessionId = await ensureSelectedModel(client, runtimeSessionId);
         const r = await client.request<{ task_id?: string }>(
           "prompt.background",
-          { session_id: sessionId, text },
+          {
+            session_id: sessionId,
+            text,
+            ...(profile && profile !== "default" ? { profile } : {}),
+          },
         );
         return { taskId: r?.task_id };
       } catch (err) {
@@ -1631,7 +1688,7 @@ export function useDashboardChatTransport({
         };
       }
     },
-    [enabled, ensureClient, ensureRuntimeSession, ensureSelectedModel],
+    [enabled, ensureClient, ensureRuntimeSession, ensureSelectedModel, profile],
   );
 
   const abort = useCallback(() => {

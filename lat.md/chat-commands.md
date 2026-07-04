@@ -4,6 +4,8 @@ Typed slash commands (`/compact`, `/compress`, `/reset`, `/web`, …) are run th
 
 The desktop talks to the hermes-agent gateway over JSON-RPC. A normal message goes via `prompt.submit`, which the gateway treats as a user turn — so a literal `/compact` reaches the model and comes back as text. Real commands must instead go through `slash.exec` (registry-backed worker) with a `command.dispatch` fallback for commands that resolve to an alias, plugin, skill, or an agent prompt.
 
+**Profile scoping over the unified SSH dashboard.** In SSH mode one machine dashboard serves every profile (see [[main-process#SSH dashboard transport]]), so chat calls must carry the active `profile` or the gateway runs them under its launch profile (`default`) — the agent would then answer as `default` even when a named profile is selected. [[src/main/remote-sessions.ts#RemoteSessionConfig]]`.profile` scopes the `/api/*` HTTP ops, and the `/api/ws` chat client passes `profile` on `session.create`/`session.resume` **and** `prompt.submit`/`prompt.background` ([[src/renderer/src/screens/Chat/hooks/useDashboardChatTransport.ts#submitDashboardPromptWithRecovery]]); `session.create` builds the agent and persists against that profile's `HERMES_HOME`/`state.db`, and each turn re-binds it. Omitted/`default` → the launch profile (unchanged for local and per-profile-remote setups).
+
 ## Routing pipeline
 
 The pure routing logic lives in [[src/renderer/src/screens/Chat/slashExec.ts#executeSlash]]: try `slash.exec`, accept either rendered output or a structured dispatch result, and on rejection fall back to `command.dispatch`, returning `done`, `send`, or `error`.
@@ -32,6 +34,14 @@ Because no global loading state is set, the slash branch shows its own feedback:
 Every dashboard turn first connects a JSON-RPC WebSocket to the gateway; that handshake must be time-bounded or a stalled socket wedges the whole transport with no error and no fallback (issue #718).
 
 [[src/renderer/src/screens/Chat/dashboardGatewayClient.ts#DashboardGatewayClient#connect]] resolves on `open`, rejects on `error` or an early `close`, **and** rejects on a connect-timeout (default 10s). A WebSocket stuck in `CONNECTING` — TCP accepted but the upgrade never completing, e.g. when a busy renderer starves the handshake — fires none of those events on its own, so without the timer the connect promise never settles. When it never settles, `ensureClient` in [[src/renderer/src/screens/Chat/hooks/useDashboardChatTransport.ts#useDashboardChatTransport]] never resolves, its cached `connectingRef` promise poisons every later send, `setIsLoading(false)` never runs, and the user sees a permanent loading spinner. The timeout makes the promise reject so auto mode falls back to the legacy HTTP transport (and explicit-dashboard mode surfaces a real error) instead of hanging. Per-request calls are separately bounded by their own 30s timeout.
+
+## Dashboard up ⇒ /api/ws only (never /v1 fallback)
+
+When a dashboard is available, chat goes through `/api/ws` **only** — never the `/v1` fallback, which 405s over the dashboard tunnel.
+
+This matches the reference `apps/desktop`, which has no `/v1` chat path at all (its `use-prompt-actions.ts` submits via `requestGateway('prompt.submit', …)` with a busy-retry). The fork's main-process `/v1` path (`sendMessageViaApi`/`sendMessageViaRuns`) exists solely for genuine gateway-only remotes; falling to it while a dashboard is up POSTs `/v1` to the dashboard tunnel — which has no `/v1` → **405**.
+
+So `ensureClient` distinguishes two failures: a **genuinely absent** dashboard (`startDashboard` → `running:false`) latches the negative flag and (auto mode) drops to legacy gateway `/v1`; a **transient** WS drop while the dashboard is up (a "socket hang up" from a tunnel blip) instead **retries the connect** (up to 3×, re-running `startDashboard` each time to re-establish the SSH tunnel). If it still can't connect, it throws a `dashboardWasReachable`-tagged error so `sendMessage` **fails the turn for the user to retry** rather than 405-ing on `/v1`.
 
 ## Completion text reconciliation
 
