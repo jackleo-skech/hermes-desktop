@@ -616,36 +616,98 @@ function logDashboardEvent(
   console.info("[Hermes dashboard event]", summary);
 }
 
-function usageFromPayload(payload: unknown): Partial<UsageState> | null {
+export function usageFromPayload(payload: unknown): Partial<UsageState> | null {
   const usage = asRecord(asRecord(payload).usage);
-  const promptTokens = Number(usage.prompt_tokens ?? usage.promptTokens ?? 0);
+  // The Hermes gateway (`_get_usage` in tui_gateway/server.py) emits
+  // snake-case, non-`_tokens` keys: input/output/prompt/completion/total plus
+  // context_used/context_max/context_percent when the context compressor is
+  // active. Older OpenAI-style payloads use prompt_tokens/promptTokens. Read
+  // every spelling so the context gauge works regardless of which backend/
+  // provider produced the usage record — no chars/4 estimate needed because
+  // the gateway already reports exact counts.
+  const promptTokens = Number(
+    usage.input ??
+      usage.prompt ??
+      usage.prompt_tokens ??
+      usage.promptTokens ??
+      0,
+  );
   const completionTokens = Number(
-    usage.completion_tokens ?? usage.completionTokens ?? 0,
+    usage.output ??
+      usage.completion ??
+      usage.completion_tokens ??
+      usage.completionTokens ??
+      0,
   );
   const totalTokens = Number(
-    usage.total_tokens ?? usage.totalTokens ?? promptTokens + completionTokens,
+    usage.total ??
+      usage.total_tokens ??
+      usage.totalTokens ??
+      promptTokens + completionTokens,
   );
-  if (!promptTokens && !completionTokens && !totalTokens) return null;
+  // context_used = the current turn's prompt-token occupancy of the context
+  // window (compressor's last_prompt_tokens), which is exactly what the gauge
+  // wants — a live snapshot, not a cross-turn sum. Fall back to the latest
+  // prompt count when the compressor hasn't reported yet.
+  const contextUsed = Number(usage.context_used ?? 0);
+  const contextMax = Number(usage.context_max ?? 0);
+  if (!promptTokens && !completionTokens && !totalTokens && !contextUsed) {
+    return null;
+  }
   return {
     promptTokens,
     completionTokens,
     totalTokens,
-    contextTokens: promptTokens || undefined,
+    contextTokens: contextUsed || promptTokens || undefined,
+    contextWindowTokens: contextMax || undefined,
   };
 }
 
+function messageChars(message: ChatMessage): number {
+  if ("content" in message) return message.content?.length ?? 0;
+  switch (message.kind) {
+    case "reasoning":
+      return message.text.length;
+    case "tool_call":
+      return message.name.length + message.args.length;
+    case "clarify":
+      return message.question.length;
+    default:
+      return 0;
+  }
+}
+
 /**
- * Rough token estimate from conversation character count.
- * Used as a last resort when the provider doesn't return usage data.
- * Assumes ~4 characters per token (conservative for English/multilingual).
+ * Rough context-occupancy estimate (~4 chars/token) from the transcript, used
+ * as a last resort when the provider omits usage counts so the context gauge
+ * still renders (it only shows when `contextTokens` is set — see Chat.tsx).
+ *
+ * `contextTokens` means the turn's PROMPT-side occupancy, and by the time
+ * `message.complete` is handled the just-finished assistant reply has already
+ * been reconciled into `messagesRef.current` — so the last assistant bubble
+ * (specifically the bubble, not trailing tool/reasoning sub-rows, which were
+ * part of the prompt loop) is subtracted back out.
+ *
+ * Inherently a floor: system prompt, tool schemas, and attachments aren't
+ * visible to the renderer.
  */
-function estimateTokensFromMessages(messages: ChatMessage[]): number {
-  const totalChars = messages.reduce(
-    (sum, m) =>
-      sum + ("content" in m ? (m.content?.length ?? 0) : 0),
+export function estimateContextTokens(
+  messages: ReadonlyArray<ChatMessage>,
+): number {
+  let totalChars = 0;
+  let lastAssistantBubbleChars = 0;
+  for (const message of messages) {
+    const chars = messageChars(message);
+    totalChars += chars;
+    const isBubble = message.kind === undefined || message.kind === "assistant";
+    if (message.role === "agent" && isBubble) {
+      lastAssistantBubbleChars = chars;
+    }
+  }
+  return Math.max(
+    Math.round((totalChars - lastAssistantBubbleChars) / 4),
     0,
   );
-  return Math.round(totalChars / 4);
 }
 
 export function completionFailed(payload: unknown): boolean {
@@ -854,7 +916,20 @@ export function useDashboardChatTransport({
   const lastSyncedCwdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    messagesRef.current = messages;
+    // `messagesRef` is the synchronous source of truth for `handleGatewayEvent`:
+    // it reads the ref, applies a stream delta, writes the ref back, then calls
+    // `setMessages`. Every `setMessages` in this hook stores that exact array in
+    // the ref, so when React finally commits our own push, `messages` is the
+    // very same reference and there is nothing to do. Re-syncing on that commit
+    // is what dropped streaming chunks (#757): a second delta could land on an
+    // older `messages` snapshot and reset the ref behind the deltas already
+    // applied. Skip when the identity matches (our push); adopt any other array,
+    // which can only come from Chat state changing underneath us — a new user
+    // turn (grows), `handleClear` (`setMessages([])`, shrinks), or a clarify
+    // card resolving in place (same length). A length check misses the last two.
+    if (messages !== messagesRef.current) {
+      messagesRef.current = messages;
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -978,36 +1053,32 @@ export function useDashboardChatTransport({
         setToolProgress(null);
         setIsLoading(false);
         const usage = usageFromPayload(event.payload);
-        if (usage) {
-          setUsage((prev) => {
-            // Estimate from messages, excluding the just-completed assistant
-            // reply (already appended to messagesRef.current at this point).
-            const lastAssistant = [...messagesRef.current]
-              .reverse()
-              .find((m) => m.role === "agent");
-            const lastAssistantLen =
-              lastAssistant && "content" in lastAssistant
-                ? (lastAssistant as { content?: string }).content?.length ?? 0
-                : 0;
-            const estimate = estimateTokensFromMessages(messagesRef.current) -
-              Math.round(lastAssistantLen / 4);
-            const ctx =
-              usage.contextTokens ||
-              Math.max(estimate, 0);
-            return {
-              promptTokens:
-                (prev?.promptTokens || 0) + (usage.promptTokens || 0),
-              completionTokens:
-                (prev?.completionTokens || 0) +
-                (usage.completionTokens || 0),
-              totalTokens:
-                (prev?.totalTokens || 0) + (usage.totalTokens || 0),
-              cost: prev?.cost,
-              contextTokens: ctx,
-              cacheReadTokens: prev?.cacheReadTokens,
-              cacheWriteTokens: prev?.cacheWriteTokens,
-            };
-          });
+        if (usage || !failed) {
+          // The gauge only renders when `contextTokens` is set, so it must be
+          // populated even when the provider omits usage — entirely
+          // (usageFromPayload → null) or just the prompt-side counts. Exact
+          // payload values win; otherwise fall back to the chars/4 transcript
+          // estimate, then to the previous turn's value. A failed turn with no
+          // usage doesn't fabricate one — nothing new entered the context.
+          const estimatedContextTokens = estimateContextTokens(
+            messagesRef.current,
+          );
+          setUsage((prev) => ({
+            promptTokens:
+              (prev?.promptTokens || 0) + (usage?.promptTokens || 0),
+            completionTokens:
+              (prev?.completionTokens || 0) + (usage?.completionTokens || 0),
+            totalTokens: (prev?.totalTokens || 0) + (usage?.totalTokens || 0),
+            cost: prev?.cost,
+            contextTokens:
+              usage?.contextTokens ||
+              estimatedContextTokens ||
+              prev?.contextTokens,
+            contextWindowTokens:
+              usage?.contextWindowTokens || prev?.contextWindowTokens,
+            cacheReadTokens: prev?.cacheReadTokens,
+            cacheWriteTokens: prev?.cacheWriteTokens,
+          }));
         }
       }
 

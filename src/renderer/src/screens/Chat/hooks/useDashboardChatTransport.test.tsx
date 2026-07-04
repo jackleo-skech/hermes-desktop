@@ -454,3 +454,91 @@ describe("useDashboardChatTransport unavailable fallback (issue #667)", () => {
     expect(startDashboard).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("useDashboardChatTransport messagesRef sync", () => {
+  beforeEach(() => {
+    dashboardMock.close.mockClear();
+    dashboardMock.connect.mockClear();
+    dashboardMock.instances.length = 0;
+    dashboardMock.onEvent = null;
+    dashboardMock.request.mockReset();
+    Object.defineProperty(window, "hermesAPI", {
+      configurable: true,
+      value: {
+        recordSessionContinuation: vi.fn(async () => true),
+        recordSessionLocalError: vi.fn(async () => true),
+        startDashboard: vi.fn(async () => ({
+          connection: { wsUrl: "ws://127.0.0.1:12345" },
+          running: true,
+        })),
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // `background.complete` appends an agent bubble built from `messagesRef.current`,
+  // so it reads exactly the array the sync effect maintains — a clean probe for
+  // whether the ref adopted an external Chat-state change. It requires a live
+  // gateway client, so every test connects with one `send` first (which does not
+  // append a user bubble — Chat owns that).
+  const connect = async (api: HarnessApi): Promise<void> => {
+    dashboardMock.request.mockImplementation(async (method: string) => {
+      if (method === "session.create") {
+        return { session_id: "live-1", stored_session_id: "stored-1" };
+      }
+      return {};
+    });
+    await act(async () => {
+      await api.send?.("hello");
+    });
+    expect(dashboardMock.onEvent).toBeTypeOf("function");
+  };
+
+  const backgroundComplete = async (): Promise<void> => {
+    await act(async () => {
+      dashboardMock.onEvent?.({
+        payload: { task_id: "t1", text: "bg answer" },
+        type: "background.complete",
+      });
+    });
+  };
+
+  it("adopts an external clear so a new turn does not resurrect deleted messages (#757)", async () => {
+    const api: HarnessApi = {};
+    render(<Harness api={api} />);
+    await connect(api);
+
+    // Chat's `handleClear` empties the list without unmounting <Chat>. A length
+    // guard (`messages.length > ref.length`) would skip this and leave the ref
+    // pointing at the deleted turn, so the next event would append onto it.
+    await act(async () => {
+      api.setMessages?.([]);
+    });
+    await backgroundComplete();
+
+    expect(api.messages).toHaveLength(1);
+    expect(api.messages?.[0]?.id).toBe("bg-t1");
+  });
+
+  it("adopts a same-length in-place replacement (clarify resolve / edit)", async () => {
+    const api: HarnessApi = {};
+    render(<Harness api={api} />);
+    await connect(api);
+
+    // Same length, different content — mirrors `handleClarifyResolved` mapping a
+    // clarify card to resolved before the gateway resumes the turn.
+    await act(async () => {
+      api.setMessages?.([
+        { id: "u-edited", role: "user", content: "edited turn" },
+      ]);
+    });
+    await backgroundComplete();
+
+    expect(api.messages).toHaveLength(2);
+    expect(api.messages?.[0]?.id).toBe("u-edited");
+    expect(api.messages?.[1]?.id).toBe("bg-t1");
+  });
+});

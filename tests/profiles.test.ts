@@ -162,7 +162,7 @@ describe("listProfiles", () => {
       throw err;
     });
 
-    const result = createProfile("test", true);
+    const result = createProfile("test", "default");
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("reserved");
@@ -192,11 +192,18 @@ describe("listProfiles", () => {
   it("allows slower cloned profile creation before timing out", () => {
     execFileSyncMock.mockReturnValue(Buffer.from(""));
 
-    expect(createProfile("slow-clone", true).success).toBe(true);
+    expect(createProfile("slow-clone", "default").success).toBe(true);
 
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "/usr/bin/python3",
-      ["/dev/null", "profile", "create", "slow-clone", "--clone"],
+      [
+        "/dev/null",
+        "profile",
+        "create",
+        "slow-clone",
+        "--clone-from",
+        "default",
+      ],
       expect.objectContaining({ timeout: 30000 }),
     );
   });
